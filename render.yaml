@@ -28,10 +28,10 @@ services:
         sync: false # RenderのダッシュボードでSetする管理者パスワード
 
   # フロントエンド: React(静的サイトとしてビルド・配信)
+  # 静的サイトはplan指定が不要(常に無料・CDN配信)なので省略する
   - type: web
     name: duty-schedule-frontend
     runtime: static
-    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
