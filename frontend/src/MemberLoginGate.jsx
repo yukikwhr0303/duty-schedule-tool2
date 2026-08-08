@@ -71,7 +71,6 @@ export default function MemberLoginGate({ children }) {
         >
           <span>
             ログイン中: <b style={{ color: "#1E1E1E" }}>{session.name}</b>
-            （{session.rank === "A" ? "上級医" : "下級医"}）
           </span>
           <button
             onClick={() => { clearMemberSession(); setSession(null); }}
@@ -105,7 +104,7 @@ export default function MemberLoginGate({ children }) {
         >
           {members.length === 0 && <option value="">(メンバー未登録)</option>}
           {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}（{m.rank === "A" ? "上級医" : "下級医"}）</option>
+            <option key={m.id} value={m.id}>{m.name}</option>
           ))}
         </select>
 
