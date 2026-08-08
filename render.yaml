@@ -1,0 +1,45 @@
+# Renderの「Blueprint」機能でこのファイルを読み込むと、
+# バックエンド(FastAPI)とフロントエンド(静的サイト)をまとめて作成できます。
+# 詳しい手順は DEPLOY.md を参照してください。
+#
+# 注意:
+# - データベース(DATABASE_URL)は Neon(無料のPostgres)を別途用意し、
+#   接続文字列をRenderの画面で貼り付けます(このファイルには書きません)。
+# - ADMIN_PASSWORD(管理者パスワード)もRenderの画面で入力します。
+# - plan は両方とも "free" を明示しています(省略すると有料プランになるため)。
+
+services:
+  # バックエンド: FastAPI
+  - type: web
+    name: duty-schedule-backend
+    runtime: python
+    plan: free
+    region: singapore
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: DATABASE_URL
+        sync: false # RenderのダッシュボードでNeonの接続文字列を貼り付ける
+      - key: ADMIN_PASSWORD
+        sync: false # RenderのダッシュボードでSetする管理者パスワード
+
+  # フロントエンド: React(静的サイトとしてビルド・配信)
+  - type: web
+    name: duty-schedule-frontend
+    runtime: static
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # バックエンドの公開URL(ホスト名)を自動で参照する。
+      # frontend/src/api.js 側で先頭に https:// を自動補完する。
+      - key: VITE_API_BASE
+        fromService:
+          name: duty-schedule-backend
+          type: web
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
