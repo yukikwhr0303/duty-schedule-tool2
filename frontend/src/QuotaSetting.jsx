@@ -69,8 +69,16 @@ export default function QuotaSetting() {
   const seniorSum = sumRank(seniors);
   const juniorSum = sumRank(juniors);
 
-  const dutyOk = seniorSum.duty === requiredSlots && juniorSum.duty === requiredSlots;
-  const oncallOk = seniorSum.oncall === requiredSlots && juniorSum.oncall === requiredSlots;
+  // 当直・オンコールは各枠ごとに「上級医1名+下級医1名」が、当直役/オンコール役どちらかに
+  // 振り分けられる形。つまり必要なのは
+  //   ・当直の合計(上級医+下級医)が枠数と一致
+  //   ・オンコールの合計(上級医+下級医)が枠数と一致
+  // であって、上級医だけ/下級医だけで当直を枠数分満たす必要はない(オンコールとの取り合いになる)。
+  const dutyTotal = seniorSum.duty + juniorSum.duty;
+  const oncallTotal = seniorSum.oncall + juniorSum.oncall;
+
+  const dutyOk = dutyTotal === requiredSlots;
+  const oncallOk = oncallTotal === requiredSlots;
   const allOk = requiredSlots > 0 && dutyOk && oncallOk;
 
   const save = async () => {
@@ -143,10 +151,8 @@ export default function QuotaSetting() {
             display: "flex", gap: "6px", flexWrap: "wrap",
           }}
         >
-          <MiniTotal label="上級医 当直計" value={seniorSum.duty} target={requiredSlots} />
-          <MiniTotal label="下級医 当直計" value={juniorSum.duty} target={requiredSlots} />
-          <MiniTotal label="上級医 オンコール計" value={seniorSum.oncall} target={requiredSlots} />
-          <MiniTotal label="下級医 オンコール計" value={juniorSum.oncall} target={requiredSlots} />
+          <MiniTotal label="当直 合計" value={dutyTotal} target={requiredSlots} sub={`上級医${seniorSum.duty}・下級医${juniorSum.duty}`} />
+          <MiniTotal label="オンコール 合計" value={oncallTotal} target={requiredSlots} sub={`上級医${seniorSum.oncall}・下級医${juniorSum.oncall}`} />
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "0 10px 6px", fontSize: "11px", color: "#8A8A8A" }}>
@@ -200,10 +206,8 @@ export default function QuotaSetting() {
           合計チェック
         </div>
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "10px" }}>
-          <SummaryCell label="上級医 当直合計" value={seniorSum.duty} target={requiredSlots} />
-          <SummaryCell label="下級医 当直合計" value={juniorSum.duty} target={requiredSlots} />
-          <SummaryCell label="上級医 オンコール合計" value={seniorSum.oncall} target={requiredSlots} />
-          <SummaryCell label="下級医 オンコール合計" value={juniorSum.oncall} target={requiredSlots} />
+          <SummaryCell label="当直 合計" value={dutyTotal} target={requiredSlots} sub={`上級医${seniorSum.duty}・下級医${juniorSum.duty}`} />
+          <SummaryCell label="オンコール 合計" value={oncallTotal} target={requiredSlots} sub={`上級医${seniorSum.oncall}・下級医${juniorSum.oncall}`} />
         </div>
         <div
           style={{
@@ -286,7 +290,7 @@ function QuotaStepper({ value, onDelta, onChange }) {
   );
 }
 
-function MiniTotal({ label, value, target }) {
+function MiniTotal({ label, value, target, sub }) {
   const ok = value === target && target > 0;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "#6B6B6B" }}>
@@ -295,11 +299,12 @@ function MiniTotal({ label, value, target }) {
         {value}
         <span style={{ fontSize: "10px", fontFamily: "inherit", fontWeight: 400, color: "#8A8A8A" }}>/{target || "―"}</span>
       </span>
+      {sub && <span style={{ fontSize: "10px", color: "#B0B0B0" }}>({sub})</span>}
     </div>
   );
 }
 
-function SummaryCell({ label, value, target }) {
+function SummaryCell({ label, value, target, sub }) {
   const ok = value === target && target > 0;
   return (
     <div style={{ flex: "1 1 130px", border: "1.5px solid #E4E4E4", borderRadius: "3px", padding: "8px 10px" }}>
@@ -308,6 +313,7 @@ function SummaryCell({ label, value, target }) {
         {value}
         <span style={{ fontSize: "11px", fontFamily: "inherit", fontWeight: 400, color: "#8A8A8A" }}> / {target || "―"}</span>
       </div>
+      {sub && <div style={{ fontSize: "10px", color: "#B0B0B0", marginTop: "2px" }}>内訳: {sub}</div>}
     </div>
   );
 }

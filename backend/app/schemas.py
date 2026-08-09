@@ -34,6 +34,21 @@ class MemberReorderRequest(BaseModel):
     member_ids: List[int]  # この順序でsort_orderを振り直す
 
 
+# ---------- NGペア ----------
+class NgPairCreate(BaseModel):
+    member_a_id: int
+    member_b_id: int
+
+
+class NgPairOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    member_a_id: int
+    member_a_name: str
+    member_b_id: int
+    member_b_name: str
+
+
 # ---------- Auth ----------
 class MemberLoginRequest(BaseModel):
     pin: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$")
