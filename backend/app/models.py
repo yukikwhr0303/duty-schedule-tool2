@@ -66,6 +66,21 @@ class AvailabilitySubmission(Base):
     member: Mapped["Member"] = relationship()
 
 
+class NgPair(Base):
+    """「この2人は当直/オンコールで同じ日に組ませない」というNGペア設定。
+    向きは問わない(どちらが当直/オンコールでも組み合わせ自体を禁止)。
+    member_a_id < member_b_id となるよう常に正規化して保存し、重複登録を防ぐ。"""
+    __tablename__ = "ng_pairs"
+    __table_args__ = (UniqueConstraint("member_a_id", "member_b_id", name="uq_ng_pair"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    member_a_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"))
+    member_b_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"))
+
+    member_a: Mapped["Member"] = relationship(foreign_keys=[member_a_id])
+    member_b: Mapped["Member"] = relationship(foreign_keys=[member_b_id])
+
+
 class Quota(Base):
     """対象期間ごとのメンバー別 希望回数(当直/オンコール)。"""
     __tablename__ = "quotas"

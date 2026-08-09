@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import Base, engine
 from . import models  # noqa: F401  (テーブル定義をBase.metadataに登録するため)
-from .routers import members, availability, quotas, fixed_slots, schedule, auth
+from .routers import members, availability, quotas, fixed_slots, schedule, auth, ng_pairs
 
 Base.metadata.create_all(bind=engine)
 
@@ -23,6 +23,7 @@ app.include_router(quotas.router)
 app.include_router(fixed_slots.router)
 app.include_router(schedule.router)
 app.include_router(auth.router)
+app.include_router(ng_pairs.router)
 
 
 @app.get("/health")

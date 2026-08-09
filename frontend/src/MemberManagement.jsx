@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Plus, X, Pencil, Check, ChevronsUp, ChevronsDown, ChevronUp, ChevronDown, Loader2, KeyRound, Power } from "lucide-react";
-import { listMembers, createMember, updateMember, deleteMember, resetMemberPin, reorderMembers } from "./api";
+import { Plus, X, Pencil, Check, ChevronsUp, ChevronsDown, ChevronUp, ChevronDown, Loader2, KeyRound, Power, Ban } from "lucide-react";
+import { listMembers, createMember, updateMember, deleteMember, resetMemberPin, reorderMembers, listNgPairs, createNgPair, deleteNgPair } from "./api";
 
 // ---- 既存プロトタイプと同じトークン(白×黒・角ばった丸み) ----
 // bg:#FFFFFF window:#FFFFFF border:#1E1E1E red:#EE1515 yellow:#FFCB05 navy:#223A70
@@ -16,6 +16,13 @@ export default function MemberManagement() {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
 
+  const [ngPairs, setNgPairs] = useState([]);
+  const [ngLoading, setNgLoading] = useState(true);
+  const [ngError, setNgError] = useState(null);
+  const [ngBusy, setNgBusy] = useState(false);
+  const [ngA, setNgA] = useState("");
+  const [ngB, setNgB] = useState("");
+
   const reload = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -25,9 +32,19 @@ export default function MemberManagement() {
       .finally(() => setLoading(false));
   }, []);
 
+  const reloadNgPairs = useCallback(() => {
+    setNgLoading(true);
+    setNgError(null);
+    listNgPairs()
+      .then(setNgPairs)
+      .catch((e) => setNgError(e.message))
+      .finally(() => setNgLoading(false));
+  }, []);
+
   useEffect(() => {
     reload();
-  }, [reload]);
+    reloadNgPairs();
+  }, [reload, reloadNgPairs]);
 
   const seniorCount = members.filter((m) => m.rank === "A" && m.is_active !== false).length;
   const juniorCount = members.filter((m) => m.rank === "B" && m.is_active !== false).length;
@@ -117,6 +134,35 @@ export default function MemberManagement() {
       setError(e.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const addNgPair = async () => {
+    if (!ngA || !ngB || ngA === ngB || ngBusy) return;
+    setNgBusy(true);
+    setNgError(null);
+    try {
+      await createNgPair(Number(ngA), Number(ngB));
+      setNgA("");
+      setNgB("");
+      reloadNgPairs();
+    } catch (e) {
+      setNgError(e.message);
+    } finally {
+      setNgBusy(false);
+    }
+  };
+
+  const removeNgPair = async (id) => {
+    setNgBusy(true);
+    setNgError(null);
+    try {
+      await deleteNgPair(id);
+      setNgPairs((prev) => prev.filter((p) => p.id !== id));
+    } catch (e) {
+      setNgError(e.message);
+    } finally {
+      setNgBusy(false);
     }
   };
 
@@ -326,6 +372,96 @@ export default function MemberManagement() {
               メンバーが登録されていません
             </div>
           )}
+        </div>
+      </div>
+
+      {/* NGペア設定 */}
+      <div className="poke-window" style={{ margin: "12px 14px 0", padding: "14px" }}>
+        <div style={{ fontSize: "13px", fontWeight: 700, color: "#6B6B6B", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+          <Ban size={14} color="#EE1515" /> NGペア設定
+        </div>
+        <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "10px", lineHeight: 1.6 }}>
+          登録した2人は、自動割り当てで同じ日の当直/オンコールの組み合わせにならないようになります（向きは問いません）。
+        </div>
+
+        {ngError && (
+          <div style={{ marginBottom: "10px", padding: "8px 10px", border: "2px solid #EE1515", borderRadius: "3px", background: "#FFF3F3", fontSize: "12px", color: "#B01010" }}>
+            エラー: {ngError}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
+          {ngPairs.map((p) => (
+            <div
+              key={p.id}
+              aria-label={`NGペア: ${p.member_a_name} と ${p.member_b_name}`}
+              style={{
+                display: "flex", alignItems: "center", gap: "8px",
+                padding: "8px 10px", border: "1.5px solid #E4E4E4", borderRadius: "3px",
+              }}
+            >
+              <div style={{ flex: 1, fontSize: "13px", fontWeight: 600 }}>
+                {p.member_a_name} <span style={{ color: "#EE1515", fontWeight: 700 }}>×</span> {p.member_b_name}
+              </div>
+              <button onClick={() => removeNgPair(p.id)} disabled={ngBusy} aria-label={`${p.member_a_name}と${p.member_b_name}のNGペアを削除`} style={iconBtn}>
+                <X size={15} color="#EE1515" />
+              </button>
+            </div>
+          ))}
+          {!ngLoading && ngPairs.length === 0 && (
+            <div style={{ padding: "10px", textAlign: "center", fontSize: "12px", color: "#8A8A8A" }}>
+              NGペアは登録されていません
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <select
+            value={ngA}
+            onChange={(e) => setNgA(e.target.value)}
+            style={{
+              flex: 1, padding: "9px 8px", border: "2px solid #1E1E1E", borderRadius: "3px",
+              fontSize: "13px", fontFamily: "inherit", color: "#1E1E1E", background: "#FFFFFF",
+            }}
+          >
+            <option value="">選択</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id} disabled={String(m.id) === ngB}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <span style={{ fontSize: "12px", color: "#8A8A8A" }}>×</span>
+          <select
+            value={ngB}
+            onChange={(e) => setNgB(e.target.value)}
+            style={{
+              flex: 1, padding: "9px 8px", border: "2px solid #1E1E1E", borderRadius: "3px",
+              fontSize: "13px", fontFamily: "inherit", color: "#1E1E1E", background: "#FFFFFF",
+            }}
+          >
+            <option value="">選択</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id} disabled={String(m.id) === ngA}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={addNgPair}
+            disabled={!ngA || !ngB || ngA === ngB || ngBusy}
+            aria-label="NGペアを登録"
+            className="pf"
+            style={{
+              flexShrink: 0, padding: "9px 12px", background: "#1E1E1E", color: "#FFFFFF",
+              border: "2px solid #1E1E1E", borderRadius: "3px", boxShadow: "0 3px 0 #6B6B6B",
+              fontSize: "12px", display: "flex", alignItems: "center", gap: "4px",
+              cursor: (!ngA || !ngB || ngA === ngB || ngBusy) ? "default" : "pointer",
+              opacity: (!ngA || !ngB || ngA === ngB || ngBusy) ? 0.5 : 1,
+            }}
+          >
+            <Plus size={14} /> 登録
+          </button>
         </div>
       </div>
 

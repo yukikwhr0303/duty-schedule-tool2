@@ -62,6 +62,12 @@ export const adminLogin = (password) => request("/auth/admin/login", { method: "
 export const reorderMembers = (memberIds) =>
   request("/members/reorder", { method: "PATCH", body: JSON.stringify({ member_ids: memberIds }) }, { admin: true });
 
+// ---------- NGペア ----------
+export const listNgPairs = () => request("/ng-pairs");
+export const createNgPair = (memberAId, memberBId) =>
+  request("/ng-pairs", { method: "POST", body: JSON.stringify({ member_a_id: memberAId, member_b_id: memberBId }) }, { admin: true });
+export const deleteNgPair = (id) => request(`/ng-pairs/${id}`, { method: "DELETE" }, { admin: true });
+
 // ---------- availability ----------
 export const getAvailability = (memberId, start, end) => {
   const params = new URLSearchParams({ member_id: memberId, start, end });

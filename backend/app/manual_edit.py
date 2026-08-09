@@ -93,8 +93,10 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                     adjacent_ids.add(neighbor.member_id)
         eligible_ids -= adjacent_ids
 
-    # 4) オンコール3連続禁止(2連続までは可、オンコールの枠のみ)
-    if role == "oncall" and idx is not None:
+    # 4) 「当直またはオンコール」が3期間連続にならないようにする(直近3期間の合計<=2)。
+    #    当直同士の連続は 3) で既に禁止済み。ここは主に、オンコール2連続の前後に
+    #    当直/オンコールが入って実質3連続になる混在パターンを防ぐためのもの。
+    if idx is not None:
         exclude_ids = set()
         for offset in (-2, -1, 0):
             window = [idx + offset, idx + offset + 1, idx + offset + 2]
@@ -102,18 +104,39 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                 continue
             other_idxs = [w for w in window if w != idx]
             for mid in eligible_ids:
-                count = 0
+                covered_count = 0
                 for w in other_idxs:
                     p = periods[w]
-                    a = next(
-                        (a for a in run.assignments if a.date == p.d and a.half == p.half and a.role == "oncall"),
-                        None,
+                    covered = any(
+                        a.member_id == mid
+                        for a in run.assignments
+                        if a.date == p.d and a.half == p.half and a.role in ("duty", "oncall")
                     )
-                    if a and a.member_id == mid:
-                        count += 1
-                if count >= 2:
+                    if covered:
+                        covered_count += 1
+                if covered_count >= 2:
                     exclude_ids.add(mid)
         eligible_ids -= exclude_ids
+
+    # 5) NGペア除外(この期間のもう一方の役割の担当者とNGペアの人は除外)
+    sibling_role2 = "oncall" if role == "duty" else "duty"
+    sibling2 = next(
+        (a for a in run.assignments if a.date == assignment.date and a.half == assignment.half and a.role == sibling_role2),
+        None,
+    )
+    if sibling2 and sibling2.member_id:
+        ng_rows = (
+            db.query(models.NgPair)
+            .filter(
+                (models.NgPair.member_a_id == sibling2.member_id)
+                | (models.NgPair.member_b_id == sibling2.member_id)
+            )
+            .all()
+        )
+        ng_partner_ids = set()
+        for row in ng_rows:
+            ng_partner_ids.add(row.member_a_id if row.member_b_id == sibling2.member_id else row.member_b_id)
+        eligible_ids -= ng_partner_ids
 
     # 常に現在の担当者自身は候補に含める(表示のため)
     if assignment.member_id:

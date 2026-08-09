@@ -88,6 +88,7 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
         .all()
     )
     quota_by_member = {q.member_id: q for q in quota_rows}
+    ng_pairs = [(p.member_a_id, p.member_b_id) for p in db.query(models.NgPair).all()]
 
     doctors = []
     for m in members:
@@ -168,11 +169,30 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
         for d in doctors:
             model.Add(duty[(p1, d.id)] + duty[(p2, d.id)] <= 1)
 
-    # オンコールは3期間連続を禁止(2期間連続までは可)
+    # 「当直またはオンコール」のどちらかを担当した状態(covered)が3期間連続にならないようにする。
+    # 当直同士の連続は上のルールで既に禁止済み(2期間連続すら不可)。
+    # このルールは主に、オンコール2連続の直後/直前に当直やオンコールが入って
+    # 実質3連続の対応になってしまう混在パターンを防ぐためのもの(オンコール2連続まで自体は許可)。
+    covered = {}
+    for p in periods:
+        for d in doctors:
+            covered[(p, d.id)] = model.NewBoolVar(f"covered_{p.d}_{p.half}_{d.id}")
+            model.Add(covered[(p, d.id)] >= duty[(p, d.id)])
+            model.Add(covered[(p, d.id)] >= oncall[(p, d.id)])
+            model.Add(covered[(p, d.id)] <= duty[(p, d.id)] + oncall[(p, d.id)])
+
     for i in range(len(periods) - 2):
         p1, p2, p3 = periods[i], periods[i + 1], periods[i + 2]
         for d in doctors:
-            model.Add(oncall[(p1, d.id)] + oncall[(p2, d.id)] + oncall[(p3, d.id)] <= 2)
+            model.Add(covered[(p1, d.id)] + covered[(p2, d.id)] + covered[(p3, d.id)] <= 2)
+
+    # NGペア: 同じ期間に、この2人が当直/オンコールのどちらの組み合わせでも一緒にならないようにする
+    for a_id, b_id in ng_pairs:
+        if a_id not in by_id or b_id not in by_id:
+            continue
+        for p in periods:
+            model.Add(duty[(p, a_id)] + oncall[(p, b_id)] <= 1)
+            model.Add(duty[(p, b_id)] + oncall[(p, a_id)] <= 1)
 
     for (p, role), doc_id in FIXED.items():
         if doc_id not in by_id:
