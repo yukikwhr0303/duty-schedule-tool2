@@ -168,6 +168,12 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
         for d in doctors:
             model.Add(duty[(p1, d.id)] + duty[(p2, d.id)] <= 1)
 
+    # オンコールは3期間連続を禁止(2期間連続までは可)
+    for i in range(len(periods) - 2):
+        p1, p2, p3 = periods[i], periods[i + 1], periods[i + 2]
+        for d in doctors:
+            model.Add(oncall[(p1, d.id)] + oncall[(p2, d.id)] + oncall[(p3, d.id)] <= 2)
+
     for (p, role), doc_id in FIXED.items():
         if doc_id not in by_id:
             continue

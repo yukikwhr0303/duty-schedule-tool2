@@ -93,6 +93,28 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                     adjacent_ids.add(neighbor.member_id)
         eligible_ids -= adjacent_ids
 
+    # 4) オンコール3連続禁止(2連続までは可、オンコールの枠のみ)
+    if role == "oncall" and idx is not None:
+        exclude_ids = set()
+        for offset in (-2, -1, 0):
+            window = [idx + offset, idx + offset + 1, idx + offset + 2]
+            if not all(0 <= w < len(periods) for w in window):
+                continue
+            other_idxs = [w for w in window if w != idx]
+            for mid in eligible_ids:
+                count = 0
+                for w in other_idxs:
+                    p = periods[w]
+                    a = next(
+                        (a for a in run.assignments if a.date == p.d and a.half == p.half and a.role == "oncall"),
+                        None,
+                    )
+                    if a and a.member_id == mid:
+                        count += 1
+                if count >= 2:
+                    exclude_ids.add(mid)
+        eligible_ids -= exclude_ids
+
     # 常に現在の担当者自身は候補に含める(表示のため)
     if assignment.member_id:
         eligible_ids.add(assignment.member_id)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Play, Loader2, Download, FileSpreadsheet, FileText, History, X, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Play, Loader2, FileSpreadsheet, FileText, History } from "lucide-react";
 import { runSchedule, listScheduleRuns, getScheduleRun, exportUrl, getCandidates, patchAssignment } from "./api";
 import PeriodPicker from "./PeriodPicker";
 
@@ -47,11 +47,6 @@ export default function ScheduleRunPanel() {
   const [runLoading, setRunLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const [modalAssignment, setModalAssignment] = useState(null);
-  const [candidates, setCandidates] = useState(null);
-  const [candidatesLoading, setCandidatesLoading] = useState(false);
-  const [patching, setPatching] = useState(false);
-
   const reloadRuns = useCallback(() => {
     setRunsLoading(true);
     listScheduleRuns()
@@ -92,35 +87,9 @@ export default function ScheduleRunPanel() {
     }
   };
 
-  const openReassign = async (assignment) => {
-    setModalAssignment(assignment);
-    setCandidates(null);
-    setCandidatesLoading(true);
-    try {
-      const cs = await getCandidates(currentRun.id, assignment.id);
-      setCandidates(cs);
-    } catch (e) {
-      setError(e.message);
-      setCandidates([]);
-    } finally {
-      setCandidatesLoading(false);
-    }
-  };
-
-  const chooseCandidate = async (memberId) => {
-    setPatching(true);
-    setError(null);
-    try {
-      const updated = await patchAssignment(currentRun.id, modalAssignment.id, memberId);
-      setCurrentRun(updated);
-      reloadRuns();
-      setModalAssignment(null);
-      setCandidates(null);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setPatching(false);
-    }
+  const handleAssignmentUpdated = (updated) => {
+    setCurrentRun(updated);
+    reloadRuns();
   };
 
   // --- 結果カレンダー用のデータ組み立て ---
@@ -159,7 +128,7 @@ export default function ScheduleRunPanel() {
         <div className="pf" style={{ fontSize: "13px", marginBottom: "10px" }}>自動割当・結果</div>
         <div style={{ fontSize: "12px", color: "#6B6B6B", lineHeight: 1.6 }}>
           対象期間を選んで「スタート」を押すと、希望回数設定の内容にもとづいて自動で割り当てます。
-          結果カレンダーの担当者をタップすると手動で入れ替えられます。
+          結果カレンダーの担当者はプルダウンで直接入れ替えられます(左が当直・右がオンコール)。
         </div>
       </div>
 
@@ -239,7 +208,7 @@ export default function ScheduleRunPanel() {
 
           <div className="poke-window" style={{ margin: "12px 14px 0", padding: "12px 8px" }}>
             <div style={{ fontSize: "12px", fontWeight: 700, color: "#6B6B6B", padding: "2px 8px 4px" }}>
-              結果カレンダー ▶ 担当者をタップすると変更できます
+              結果カレンダー
             </div>
             <div style={{ fontSize: "10px", color: "#8A8A8A", padding: "0 8px 8px", display: "flex", gap: "12px" }}>
               <span><span style={{ color: NAME_COLOR.under }}>■</span> アンダー(希望より少ない)</span>
@@ -262,9 +231,10 @@ export default function ScheduleRunPanel() {
                     <div key={di} style={{ border: "1.5px solid #1E1E1E", borderRadius: "2px", background: bg, padding: "3px", fontSize: "10px", minHeight: "56px" }}>
                       <div style={{ fontWeight: 700, marginBottom: "2px" }}>{d.getDate()}</div>
                       {halfKeys.map((h) => (
-                        <div key={h} style={{ display: "flex", flexDirection: "column", gap: "1px", marginBottom: "2px" }}>
-                          <NameBtn a={halves[h].duty} tally={tallyByMember} onClick={() => halves[h].duty && openReassign(halves[h].duty)} />
-                          <NameBtn a={halves[h].oncall} tally={tallyByMember} onClick={() => halves[h].oncall && openReassign(halves[h].oncall)} />
+                        <div key={h} style={{ display: "flex", alignItems: "center", gap: "1px", marginBottom: "2px" }}>
+                          <AssignSelect runId={currentRun.id} a={halves[h].duty} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
+                          <span style={{ color: "#C4C4C4", fontSize: "9px" }}>/</span>
+                          <AssignSelect runId={currentRun.id} a={halves[h].oncall} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
                         </div>
                       ))}
                     </div>
@@ -314,81 +284,43 @@ export default function ScheduleRunPanel() {
         </>
       )}
 
-      {modalAssignment && (
-        <div style={{ position: "relative", minHeight: "300px", background: "rgba(30,30,30,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", margin: "0 14px 24px", borderRadius: "4px" }}>
-          <div className="poke-window" style={{ width: "100%", maxWidth: "360px", padding: "16px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
-              <div style={{ fontSize: "13px", fontWeight: 700 }}>
-                {modalAssignment.date} の{modalAssignment.role === "duty" ? "当直" : "オンコール"}を変更
-              </div>
-              <button onClick={() => { setModalAssignment(null); setCandidates(null); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px" }}>
-                <X size={16} />
-              </button>
-            </div>
-            <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "12px" }}>現在: {modalAssignment.member_name || "―(空欄)"}</div>
-
-            {candidatesLoading && (
-              <div style={{ textAlign: "center", padding: "16px" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
-            )}
-
-            {!candidatesLoading && candidates && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "300px", overflowY: "auto" }}>
-                {candidates.map((c) => {
-                  const statusStyle =
-                    c.status === "over" ? { border: "2px solid #E24B4A", background: "#FCEBEB", labelColor: "#993C1D" } :
-                    c.status === "under" ? { border: "2px solid #639922", background: "#EAF3DE", labelColor: "#3B6D11" } :
-                    { border: "1.5px solid #1E1E1E", background: "#FFFFFF", labelColor: "#6B6B6B" };
-                  return (
-                    <button
-                      key={c.member_id}
-                      onClick={() => chooseCandidate(c.member_id)}
-                      disabled={patching || c.is_current}
-                      style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "9px 10px", borderRadius: "3px", cursor: c.is_current ? "default" : "pointer",
-                        border: statusStyle.border, background: statusStyle.background, fontFamily: "inherit",
-                        opacity: patching ? 0.6 : 1,
-                      }}
-                    >
-                      <span style={{ fontSize: "13px", fontWeight: 600 }}>
-                        {c.name}({c.rank === "A" ? "上級医" : "下級医"}){c.is_current && "・現在の担当"}
-                      </span>
-                      <span style={{ fontSize: "11px", fontWeight: 700, color: statusStyle.labelColor }}>
-                        {modalAssignment.role === "duty" ? "当直" : "オンコール"}{c.current_count}/{c.quota}
-                      </span>
-                    </button>
-                  );
-                })}
-                {candidates.length === 0 && (
-                  <div style={{ padding: "16px", textAlign: "center", fontSize: "12px", color: "#8A8A8A" }}>
-                    条件(区分・不可設定・連続当直禁止)に合う候補者がいません
-                  </div>
-                )}
-                <button
-                  onClick={() => chooseCandidate(null)}
-                  disabled={patching}
-                  style={{ marginTop: "4px", padding: "9px 10px", borderRadius: "3px", border: "1.5px dashed #8A8A8A", background: "none", fontFamily: "inherit", fontSize: "12px", color: "#6B6B6B", cursor: "pointer" }}
-                >
-                  空欄にする
-                </button>
-              </div>
-            )}
-
-            <div style={{ fontSize: "10px", color: "#8A8A8A", marginTop: "10px", lineHeight: 1.6 }}>
-              ▶ 緑=希望回数より少ない人(入れやすい)、赤=多い人(外しやすい)
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
-function NameBtn({ a, tally, onClick }) {
+// カレンダー枠内のプルダウン。フォーカス時に候補一覧を取得し、選ぶとその場で入れ替わる。
+function AssignSelect({ runId, a, tally, onUpdated }) {
+  const [candidates, setCandidates] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [patching, setPatching] = useState(false);
+
   if (!a) return null;
-  const empty = !a.member_id;
+
+  const loadCandidates = () => {
+    if (candidates || loading) return;
+    setLoading(true);
+    getCandidates(runId, a.id)
+      .then(setCandidates)
+      .catch(() => setCandidates([]))
+      .finally(() => setLoading(false));
+  };
+
+  const handleChange = async (e) => {
+    const v = e.target.value;
+    const memberId = v === "" ? null : Number(v);
+    setPatching(true);
+    try {
+      const updated = await patchAssignment(runId, a.id, memberId);
+      onUpdated(updated);
+    } catch (_) {
+      // 失敗時は元の値のまま(selectはcurrentRunの値に追従して自動的に戻る)
+    } finally {
+      setPatching(false);
+    }
+  };
+
   let color = a.manual_override ? "#223A70" : "#1E1E1E";
-  if (empty) {
+  if (!a.member_id) {
     color = "#B01010";
   } else {
     const t = tally?.[a.member_id];
@@ -399,16 +331,24 @@ function NameBtn({ a, tally, onClick }) {
       else if (count < quota) color = NAME_COLOR.under;
     }
   }
+
+  const options = candidates || (a.member_id ? [{ member_id: a.member_id, name: a.member_name }] : []);
+
   return (
-    <button
-      onClick={onClick}
+    <select
+      value={a.member_id ?? ""}
+      onFocus={loadCandidates}
+      onChange={handleChange}
+      disabled={patching}
       style={{
-        background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer",
-        fontFamily: "inherit", fontSize: "10px", fontWeight: 700, color,
-        textDecoration: "underline dotted",
+        flex: 1, minWidth: 0, maxWidth: "48%", border: "none", background: "none", fontFamily: "inherit",
+        fontSize: "10px", fontWeight: 700, color, cursor: "pointer", padding: 0,
       }}
     >
-      {a.member_name || "―(空欄)"}
-    </button>
+      <option value="">―</option>
+      {options.map((c) => (
+        <option key={c.member_id} value={c.member_id}>{c.name}</option>
+      ))}
+    </select>
   );
 }
