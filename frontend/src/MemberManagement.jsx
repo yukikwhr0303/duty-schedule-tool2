@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Plus, X, Pencil, Check, ChevronsUp, ChevronsDown, Loader2, KeyRound } from "lucide-react";
-import { listMembers, createMember, updateMember, deleteMember, resetMemberPin } from "./api";
+import { Plus, X, Pencil, Check, ChevronsUp, ChevronsDown, ChevronUp, ChevronDown, Loader2, KeyRound, Power } from "lucide-react";
+import { listMembers, createMember, updateMember, deleteMember, resetMemberPin, reorderMembers } from "./api";
 
 // ---- 既存プロトタイプと同じトークン(白×黒・角ばった丸み) ----
 // bg:#FFFFFF window:#FFFFFF border:#1E1E1E red:#EE1515 yellow:#FFCB05 navy:#223A70
@@ -29,8 +29,8 @@ export default function MemberManagement() {
     reload();
   }, [reload]);
 
-  const seniorCount = members.filter((m) => m.rank === "A").length;
-  const juniorCount = members.filter((m) => m.rank === "B").length;
+  const seniorCount = members.filter((m) => m.rank === "A" && m.is_active !== false).length;
+  const juniorCount = members.filter((m) => m.rank === "B" && m.is_active !== false).length;
 
   const addMember = async () => {
     const name = newName.trim();
@@ -69,6 +69,37 @@ export default function MemberManagement() {
     setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, rank: nextRank } : x)));
     try {
       await updateMember(m.id, { rank: nextRank });
+    } catch (e) {
+      setError(e.message);
+      reload();
+    }
+  };
+
+  const moveMember = async (index, direction) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= members.length || busy) return;
+    const reordered = [...members];
+    [reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]];
+    setMembers(reordered);
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await reorderMembers(reordered.map((m) => m.id));
+      setMembers(updated);
+    } catch (e) {
+      setError(e.message);
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleActive = async (m) => {
+    const nextActive = !(m.is_active !== false);
+    setError(null);
+    setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, is_active: nextActive } : x)));
+    try {
+      await updateMember(m.id, { is_active: nextActive });
     } catch (e) {
       setError(e.message);
       reload();
@@ -184,14 +215,36 @@ export default function MemberManagement() {
           メンバー一覧（タップでA/B切り替え）
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          {members.map((m) => (
+          {members.map((m, index) => {
+            const active = m.is_active !== false;
+            return (
             <div
               key={m.id}
               style={{
                 display: "flex", alignItems: "center", gap: "10px",
                 padding: "10px 10px", border: "1.5px solid #E4E4E4", borderRadius: "3px",
+                opacity: active ? 1 : 0.5,
               }}
             >
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px", flexShrink: 0 }}>
+                <button
+                  onClick={() => moveMember(index, -1)}
+                  disabled={busy || index === 0}
+                  title="上に移動"
+                  style={{ ...iconBtn, padding: "2px", opacity: index === 0 ? 0.3 : 1 }}
+                >
+                  <ChevronUp size={14} color="#6B6B6B" />
+                </button>
+                <button
+                  onClick={() => moveMember(index, 1)}
+                  disabled={busy || index === members.length - 1}
+                  title="下に移動"
+                  style={{ ...iconBtn, padding: "2px", opacity: index === members.length - 1 ? 0.3 : 1 }}
+                >
+                  <ChevronDown size={14} color="#6B6B6B" />
+                </button>
+              </div>
+
               <button
                 onClick={() => toggleRank(m)}
                 style={{
@@ -232,6 +285,24 @@ export default function MemberManagement() {
                 {m.has_pin ? "PIN設定済" : "PIN未設定"}
               </span>
 
+              <button
+                onClick={() => toggleActive(m)}
+                disabled={busy}
+                title={active ? "休止にする（当直から外す）" : "在籍に戻す"}
+                className="pf"
+                style={{
+                  width: "64px", padding: "6px 0", flexShrink: 0,
+                  background: active ? "#FFFFFF" : "#1E1E1E",
+                  color: active ? "#6B6B6B" : "#FFFFFF",
+                  border: `2px solid ${active ? "#C9C9C9" : "#1E1E1E"}`, borderRadius: "3px",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: "4px",
+                  fontSize: "11px", cursor: "pointer",
+                }}
+              >
+                <Power size={12} />
+                {active ? "在籍中" : "休止中"}
+              </button>
+
               <button onClick={() => resetPin(m)} disabled={busy} title="暗証番号をリセット" style={iconBtn}>
                 <KeyRound size={14} color="#223A70" />
               </button>
@@ -249,7 +320,7 @@ export default function MemberManagement() {
                 <X size={15} color="#EE1515" />
               </button>
             </div>
-          ))}
+          );})}
           {!loading && members.length === 0 && (
             <div style={{ padding: "20px", textAlign: "center", fontSize: "13px", color: "#8A8A8A" }}>
               メンバーが登録されていません

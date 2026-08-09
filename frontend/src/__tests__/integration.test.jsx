@@ -9,6 +9,7 @@ import AdminPage from "../AdminPage";
 import MemberLoginGate from "../MemberLoginGate";
 import AdminLoginGate from "../AdminLoginGate";
 import MemberAvailabilityViewer from "../MemberAvailabilityViewer";
+import MissingSubmissions from "../MissingSubmissions";
 import { setAdminPassword, clearAdminPassword, clearMemberSession } from "../api";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -419,5 +420,167 @@ describe("実バックエンドとの結合テスト", () => {
       const rows = await r.json();
       expect(rows.length).toBeGreaterThan(0);
     });
+  });
+
+  it("メンバー管理画面: ▲で並び替えるとバックエンドの表示順に反映される", async () => {
+    const user = userEvent.setup();
+    const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
+    const r1 = await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "並び替えA", rank: "A" }) });
+    const mA = await r1.json();
+    const r2 = await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "並び替えB", rank: "A" }) });
+    const mB = await r2.json();
+
+    render(<MemberManagement />);
+    await waitFor(() => expect(screen.getByText("並び替えB")).toBeInTheDocument());
+
+    const rowB = screen.getByText("並び替えB").closest("div").parentElement;
+    const upBtn = within(rowB).getByTitle("上に移動");
+    await user.click(upBtn);
+
+    await waitFor(async () => {
+      const res = await fetch(`${API_BASE}/members`);
+      const members = await res.json();
+      const idxA = members.findIndex((m) => m.id === mA.id);
+      const idxB = members.findIndex((m) => m.id === mB.id);
+      expect(idxB).toBeLessThan(idxA);
+    });
+  });
+
+  it("メンバー管理画面: 在籍ボタンで休止中に切り替わり、バックエンドのis_activeに反映される", async () => {
+    const user = userEvent.setup();
+    const r = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
+      body: JSON.stringify({ name: "休止テスト五郎", rank: "B" }),
+    });
+    const m = await r.json();
+
+    render(<MemberManagement />);
+    await waitFor(() => expect(screen.getByText("休止テスト五郎")).toBeInTheDocument());
+
+    const row = screen.getByText("休止テスト五郎").closest("div").parentElement;
+    const toggleBtn = within(row).getByText("在籍中");
+    await user.click(toggleBtn);
+
+    await waitFor(() => expect(within(row).getByText("休止中")).toBeInTheDocument());
+    await waitFor(async () => {
+      const res = await fetch(`${API_BASE}/members`);
+      const members = await res.json();
+      const updated = members.find((x) => x.id === m.id);
+      expect(updated.is_active).toBe(false);
+    });
+  });
+
+  it("希望回数設定画面: ステッパー操作ですぐ上の合計表示が更新される", async () => {
+    const user = userEvent.setup();
+    const r = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
+      body: JSON.stringify({ name: "合計表示テスト六郎", rank: "A" }),
+    });
+    await r.json();
+
+    render(<QuotaSetting />);
+    await waitFor(() => expect(screen.getByText("合計表示テスト六郎")).toBeInTheDocument());
+
+    const comboboxes = screen.getAllByRole("combobox");
+    await user.selectOptions(comboboxes[0], "2026");
+    await user.selectOptions(comboboxes[1], "12");
+    await waitFor(() => expect(screen.getByText(/12\/1.*〜.*12\/31.*31日間/)).toBeInTheDocument());
+
+    const memberRow = screen.getByText("合計表示テスト六郎").closest("div").parentElement;
+    const steppers = within(memberRow).getAllByRole("spinbutton");
+    await user.clear(steppers[0]);
+    await user.type(steppers[0], "4");
+
+    const seniorDutyLabel = screen.getByText("上級医 当直計");
+    const totalsCell = seniorDutyLabel.parentElement;
+    await waitFor(() => expect(within(totalsCell).getByText("4")).toBeInTheDocument());
+  });
+
+  it("希望入力カレンダー画面: コメントを保存でき、「提出する」で提出済みになる。旧フッターのカウント表示は無い", async () => {
+    const user = userEvent.setup();
+    const createRes = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
+      body: JSON.stringify({ name: "コメント提出テスト七郎", rank: "B" }),
+    });
+    const cm = await createRes.json();
+
+    render(<DutyCalendar member={cm} />);
+    await waitFor(() => expect(screen.getByText("当直・オンコール希望入力")).toBeInTheDocument());
+
+    // 旧フッターの「不可あり」カウント表示は無くなっている
+    expect(screen.queryByText("不可あり")).not.toBeInTheDocument();
+    // まだ未提出
+    expect(screen.getByText("この月はまだ提出されていません")).toBeInTheDocument();
+
+    const dayButtons = screen.getAllByRole("button").filter((b) => /^\d+$/.test(b.textContent || ""));
+    await user.click(dayButtons[0]);
+    await waitFor(() => expect(screen.getByText("不可にする枠を選んでください")).toBeInTheDocument());
+
+    const commentBox = screen.getByPlaceholderText(/学会のため午後不在/);
+    await user.type(commentBox, "テストコメント");
+    await user.click(screen.getByRole("button", { name: /^▶\s*保存$/ }));
+    await waitFor(() => expect(screen.queryByText("不可にする枠を選んでください")).not.toBeInTheDocument());
+
+    await waitFor(async () => {
+      const r = await fetch(`${API_BASE}/availability?member_id=${cm.id}`);
+      const rows = await r.json();
+      expect(rows.some((row) => row.note === "テストコメント")).toBe(true);
+    });
+
+    await user.click(screen.getByRole("button", { name: "この内容で提出する" }));
+    await waitFor(() => expect(screen.getByText(/提出済み/)).toBeInTheDocument());
+
+    await waitFor(async () => {
+      const now = new Date();
+      const y = now.getFullYear(), m0 = now.getMonth();
+      const start = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
+      const days = new Date(y, m0 + 1, 0).getDate();
+      const r = await fetch(`${API_BASE}/availability/submissions?period_start=${start}&period_days=${days}`);
+      const subs = await r.json();
+      expect(subs.some((s) => s.member_id === cm.id)).toBe(true);
+    });
+  });
+
+  it("管理者ページ: 個人の希望表を閲覧のみの状態でも当直/オンコールの可否を確認できる", async () => {
+    const user = userEvent.setup();
+    const createRes = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
+      body: JSON.stringify({ name: "閲覧確認テスト八郎", rank: "A" }),
+    });
+    const vm = await createRes.json();
+
+    render(<MemberAvailabilityViewer />);
+    await waitFor(() => expect(screen.getByText(/閲覧確認テスト八郎/)).toBeInTheDocument());
+    const select = screen.getByRole("combobox");
+    await user.selectOptions(select, String(vm.id));
+
+    const dayButtons = screen.getAllByRole("button").filter((b) => /^\d+$/.test(b.textContent || ""));
+    await user.click(dayButtons[0]);
+
+    await waitFor(() => expect(screen.getByText("内容を確認できます（閲覧のみ）")).toBeInTheDocument());
+    expect(screen.getAllByText("当直").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("○ 可").length).toBeGreaterThan(0);
+    // 閲覧のみなので、トグル可能なボタンとしては表示されない(静的表示)
+    expect(screen.queryByRole("button", { name: /当直/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+    await waitFor(() => expect(screen.queryByText("内容を確認できます（閲覧のみ）")).not.toBeInTheDocument());
+  });
+
+  it("管理者ページ: 未提出リストに提出していないメンバーの名前が表示される", async () => {
+    const createRes = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
+      body: JSON.stringify({ name: "未提出確認テスト九郎", rank: "B" }),
+    });
+    await createRes.json();
+
+    render(<MissingSubmissions />);
+    await waitFor(() => expect(screen.getByText(/未提出リスト/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("未提出確認テスト九郎")).toBeInTheDocument());
   });
 });

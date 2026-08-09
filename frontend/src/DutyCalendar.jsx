@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Moon, Phone, Sunrise, Sunset, RefreshCw, Loader2 } from "lucide-react";
-import { getAvailability, replaceAvailability } from "./api";
+import { ChevronLeft, ChevronRight, Moon, Phone, Sunrise, Sunset, RefreshCw, Loader2, MessageSquare, CheckCircle2 } from "lucide-react";
+import { getAvailability, replaceAvailability, submitAvailability, getSubmissions } from "./api";
 import { getDeadlineStatus, formatDeadlineLabel } from "./deadline";
 
 // ---- retro handheld-RPG tokens (v4: black/white, rounded box) ----
@@ -51,6 +51,7 @@ function rowsToEntries(rows) {
         type: "weekday",
         duty: halves.ALL.duty_ng ? "ng" : "ok",
         call: halves.ALL.oncall_ng ? "ng" : "ok",
+        note: halves.ALL.note || "",
       };
     } else {
       const am = halves.AM, pm = halves.PM;
@@ -60,20 +61,22 @@ function rowsToEntries(rows) {
         pmDuty: pm?.duty_ng ? "ng" : "ok",
         amCall: am?.oncall_ng ? "ng" : "ok",
         pmCall: pm?.oncall_ng ? "ng" : "ok",
+        note: am?.note || pm?.note || "",
       };
     }
   });
   return entries;
 }
 
-// entries辞書の1日分を、API に送るレコード([{date,half,duty_ng,oncall_ng}, ...]) に変換
+// entries辞書の1日分を、API に送るレコード([{date,half,duty_ng,oncall_ng,note}, ...]) に変換
 function entryToRecords(dateStr, e) {
+  const note = e.note && e.note.trim() ? e.note.trim() : null;
   if (e.type === "weekday") {
-    return [{ date: dateStr, half: "ALL", duty_ng: e.duty === "ng", oncall_ng: e.call === "ng" }];
+    return [{ date: dateStr, half: "ALL", duty_ng: e.duty === "ng", oncall_ng: e.call === "ng", note }];
   }
   return [
-    { date: dateStr, half: "AM", duty_ng: e.amDuty === "ng", oncall_ng: e.amCall === "ng" },
-    { date: dateStr, half: "PM", duty_ng: e.pmDuty === "ng", oncall_ng: e.pmCall === "ng" },
+    { date: dateStr, half: "AM", duty_ng: e.amDuty === "ng", oncall_ng: e.amCall === "ng", note },
+    { date: dateStr, half: "PM", duty_ng: e.pmDuty === "ng", oncall_ng: e.pmCall === "ng", note },
   ];
 }
 
@@ -89,6 +92,8 @@ export default function DutyCalendar({ member }) {
   const [savingDay, setSavingDay] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [submission, setSubmission] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const nDays = daysInMonth(year, month);
   const startWd = firstWeekday(year, month);
@@ -115,6 +120,33 @@ export default function DutyCalendar({ member }) {
     loadMonth();
   }, [loadMonth]);
 
+  const loadSubmission = useCallback(() => {
+    if (!memberId) return;
+    const start = isoKey(year, month, 1);
+    getSubmissions(start, nDays)
+      .then((rows) => setSubmission(rows.find((r) => r.member_id === memberId) || null))
+      .catch(() => {});
+  }, [memberId, year, month, nDays]);
+
+  useEffect(() => {
+    loadSubmission();
+  }, [loadSubmission]);
+
+  const submitMonth = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const start = isoKey(year, month, 1);
+      const result = await submitAvailability(memberId, start, nDays);
+      setSubmission(result);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
     if (m < 0) { m = 11; y -= 1; }
@@ -127,8 +159,8 @@ export default function DutyCalendar({ member }) {
     const wknd = isWeekend(year, month, day);
     const k = isoKey(year, month, day);
     const existing = entries[k];
-    if (wknd) setDraft(existing || { type: "weekend", amDuty: "ok", pmDuty: "ok", amCall: "ok", pmCall: "ok" });
-    else setDraft(existing || { type: "weekday", duty: "ok", call: "ok" });
+    if (wknd) setDraft(existing || { type: "weekend", amDuty: "ok", pmDuty: "ok", amCall: "ok", pmCall: "ok", note: "" });
+    else setDraft(existing || { type: "weekday", duty: "ok", call: "ok", note: "" });
     setActiveDay(day);
   };
 
@@ -136,6 +168,8 @@ export default function DutyCalendar({ member }) {
     d.type === "weekday"
       ? d.duty === "ng" || d.call === "ng"
       : d.amDuty === "ng" || d.pmDuty === "ng" || d.amCall === "ng" || d.pmCall === "ng";
+
+  const hasContent = (d) => hasAnyNg(d) || !!(d.note && d.note.trim());
 
   const persistDay = async (dateStr, entryOrNull) => {
     setSavingDay(true);
@@ -159,7 +193,7 @@ export default function DutyCalendar({ member }) {
 
   const saveDraft = () => {
     const k = isoKey(year, month, activeDay);
-    persistDay(k, hasAnyNg(draft) ? draft : null);
+    persistDay(k, hasContent(draft) ? draft : null);
   };
 
   const clearDraft = () => {
@@ -188,10 +222,10 @@ export default function DutyCalendar({ member }) {
           if (isWeekend(year, month, d)) {
             records.push({ date: dateStr, half: "AM", duty_ng: true, oncall_ng: true });
             records.push({ date: dateStr, half: "PM", duty_ng: true, oncall_ng: true });
-            nextEntries[dateStr] = { type: "weekend", amDuty: "ng", pmDuty: "ng", amCall: "ng", pmCall: "ng" };
+            nextEntries[dateStr] = { type: "weekend", amDuty: "ng", pmDuty: "ng", amCall: "ng", pmCall: "ng", note: "" };
           } else {
             records.push({ date: dateStr, half: "ALL", duty_ng: true, oncall_ng: true });
-            nextEntries[dateStr] = { type: "weekday", duty: "ng", call: "ng" };
+            nextEntries[dateStr] = { type: "weekday", duty: "ng", call: "ng", note: "" };
           }
         }
       }
@@ -206,16 +240,6 @@ export default function DutyCalendar({ member }) {
 
   const monthName = `${year}/${String(month + 1).padStart(2, "0")}`;
   const deadlineStatus = getDeadlineStatus(new Date(), year, month);
-
-  const summary = useMemo(() => {
-    let restricted = 0, fullyBlocked = 0;
-    Object.values(entries).forEach((e) => {
-      restricted += 1;
-      if (e.type === "weekday") { if (e.duty === "ng" && e.call === "ng") fullyBlocked += 1; }
-      else { if (e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng") fullyBlocked += 1; }
-    });
-    return { restricted, total: nDays, fullyBlocked };
-  }, [entries, nDays]);
 
   return (
     <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E", paddingBottom: "100px" }}>
@@ -322,13 +346,14 @@ export default function DutyCalendar({ member }) {
             const k = isoKey(year, month, day);
             const e = entries[k];
             const allNg = e && (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng");
+            const restricted = e && (e.type === "weekday" ? (e.duty === "ng" || e.call === "ng") : (e.amDuty === "ng" || e.pmDuty === "ng" || e.amCall === "ng" || e.pmCall === "ng"));
             const isToday = year === today.getFullYear() && month === today.getMonth() && day === today.getDate();
             const isRedDay = dow === 0 || !!hName;
             const dowTint = isRedDay ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
             const dowBorder = isRedDay ? "#EE1515" : dow === 6 ? "#223A70" : "#1E1E1E";
-            const bg = allNg ? "#EE1515" : e ? "#FFCB05" : dowTint;
-            const border = e ? "#1E1E1E" : dowBorder;
-            const textColor = allNg ? "#FFFFFF" : e ? "#1E1E1E" : isRedDay ? "#B01010" : dow === 6 ? "#223A70" : "#1E1E1E";
+            const bg = allNg ? "#EE1515" : restricted ? "#FFCB05" : dowTint;
+            const border = restricted ? "#1E1E1E" : dowBorder;
+            const textColor = allNg ? "#FFFFFF" : restricted ? "#1E1E1E" : isRedDay ? "#B01010" : dow === 6 ? "#223A70" : "#1E1E1E";
             return (
               <button
                 key={idx}
@@ -346,10 +371,15 @@ export default function DutyCalendar({ member }) {
               >
                 <span style={{ fontSize: "14px", fontWeight: 700 }}>{day}</span>
                 {hName && !e && <span style={{ fontSize: "8px", color: "#B01010", marginTop: "1px" }}>祝</span>}
-                {e && e.type === "weekend" && !allNg && (
+                {e && e.type === "weekend" && restricted && !allNg && (
                   <div style={{ display: "flex", gap: "2px", marginTop: "3px" }}>
                     <PixDot ng={e.amDuty === "ng"} /><PixDot ng={e.pmDuty === "ng"} /><PixDot ng={e.amCall === "ng"} /><PixDot ng={e.pmCall === "ng"} />
                   </div>
+                )}
+                {e?.note && (
+                  <span style={{ position: "absolute", top: "2px", right: "2px" }}>
+                    <MessageSquare size={9} color={allNg ? "#FFFFFF" : "#223A70"} />
+                  </span>
                 )}
               </button>
             );
@@ -357,13 +387,30 @@ export default function DutyCalendar({ member }) {
         </div>
       </div>
 
-      {/* footer window */}
-      <div className="poke-window" style={{ position: "fixed", bottom: "10px", left: "14px", right: "14px", padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FFFFFF" }}>
-        <div style={{ fontSize: "12.5px", color: "#6B6B6B", lineHeight: 1.7 }}>
-          不可あり <span style={{ color: "#C99A00", fontWeight: 700, fontSize: "15px" }}>{summary.restricted}</span>日<br />
-          終日不可 <span style={{ color: "#EE1515", fontWeight: 700, fontSize: "15px" }}>{summary.fullyBlocked}</span>日
+      {/* footer window: submission status */}
+      <div className="poke-window" style={{ position: "fixed", bottom: "10px", left: "14px", right: "14px", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", background: "#FFFFFF" }}>
+        <div style={{ fontSize: "12px", color: submission ? "#1E7A34" : "#8A8A8A", display: "flex", alignItems: "center", gap: "6px", lineHeight: 1.5 }}>
+          {submission ? (
+            <>
+              <CheckCircle2 size={15} />
+              提出済み（{formatDeadlineLabel(new Date(submission.submitted_at))}）
+            </>
+          ) : (
+            "この月はまだ提出されていません"
+          )}
         </div>
-        <div style={{ fontSize: "11px", color: "#8A8A8A" }}>タップした時点で保存済みです</div>
+        <button
+          onClick={submitMonth}
+          disabled={submitting}
+          className="pf"
+          style={{
+            padding: "10px 16px", background: "#1E1E1E", color: "#FFFFFF", border: "2px solid #1E1E1E",
+            borderRadius: "3px", boxShadow: "0 3px 0 #6B6B6B", fontSize: "12px",
+            cursor: submitting ? "default" : "pointer", opacity: submitting ? 0.6 : 1, whiteSpace: "nowrap",
+          }}
+        >
+          {submitting ? "送信中..." : "この内容で提出する"}
+        </button>
       </div>
 
       {/* modal: command window */}
@@ -397,6 +444,22 @@ export default function DutyCalendar({ member }) {
                 <FieldRow icon={<Phone size={16} />} label="オンコール" ng={draft.pmCall === "ng"} onToggle={() => setDraft({ ...draft, pmCall: draft.pmCall === "ng" ? "ok" : "ng" })} />
               </div>
             )}
+
+            <div style={{ marginTop: "14px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#6B6B6B", display: "flex", alignItems: "center", gap: "5px", marginBottom: "6px" }}>
+                <MessageSquare size={14} /> コメント（任意）
+              </label>
+              <textarea
+                value={draft.note || ""}
+                onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+                placeholder="例：学会のため午後不在　など"
+                rows={2}
+                style={{
+                  width: "100%", padding: "8px 10px", border: "2px solid #1E1E1E", borderRadius: "3px",
+                  fontSize: "13px", fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box",
+                }}
+              />
+            </div>
 
             <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
               <button onClick={clearDraft} disabled={savingDay} style={{ flex: 1, padding: "12px", background: "#FFFFFF", color: "#6B6B6B", border: "2px solid #1E1E1E", borderRadius: "3px", fontSize: "13px", fontWeight: 700, cursor: savingDay ? "default" : "pointer", opacity: savingDay ? 0.6 : 1 }}>

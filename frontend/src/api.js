@@ -59,6 +59,8 @@ export const deleteMember = (id) => request(`/members/${id}`, { method: "DELETE"
 export const memberLogin = (id, pin) => request(`/members/${id}/login`, { method: "POST", body: JSON.stringify({ pin }) });
 export const resetMemberPin = (id) => request(`/members/${id}/reset-pin`, { method: "PATCH" }, { admin: true });
 export const adminLogin = (password) => request("/auth/admin/login", { method: "POST", body: JSON.stringify({ password }) });
+export const reorderMembers = (memberIds) =>
+  request("/members/reorder", { method: "PATCH", body: JSON.stringify({ member_ids: memberIds }) }, { admin: true });
 
 // ---------- availability ----------
 export const getAvailability = (memberId, start, end) => {
@@ -70,6 +72,15 @@ export const replaceAvailability = (memberId, start, end, entries) =>
     method: "PUT",
     body: JSON.stringify({ start, end, entries }),
   });
+export const submitAvailability = (memberId, periodStart, periodDays) =>
+  request(`/availability/${memberId}/submit`, {
+    method: "POST",
+    body: JSON.stringify({ period_start: periodStart, period_days: periodDays }),
+  });
+export const getSubmissions = (periodStart, periodDays) => {
+  const params = new URLSearchParams({ period_start: periodStart, period_days: periodDays });
+  return request(`/availability/submissions?${params.toString()}`);
+};
 
 // ---------- quotas ----------
 export const getQuotas = (periodStart, periodDays) => {

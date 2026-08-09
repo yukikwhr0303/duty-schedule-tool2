@@ -135,6 +135,19 @@ export default function QuotaSetting() {
           メンバー別 希望回数
         </div>
 
+        <div
+          style={{
+            position: "sticky", top: "44px", zIndex: 15, background: "#FFFFFF",
+            margin: "0 4px 10px", padding: "8px 8px", border: "1.5px solid #1E1E1E", borderRadius: "3px",
+            display: "flex", gap: "6px", flexWrap: "wrap",
+          }}
+        >
+          <MiniTotal label="上級医 当直計" value={seniorSum.duty} target={requiredSlots} />
+          <MiniTotal label="下級医 当直計" value={juniorSum.duty} target={requiredSlots} />
+          <MiniTotal label="上級医 オンコール計" value={seniorSum.oncall} target={requiredSlots} />
+          <MiniTotal label="下級医 オンコール計" value={juniorSum.oncall} target={requiredSlots} />
+        </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "0 10px 6px", fontSize: "11px", color: "#8A8A8A" }}>
           <div style={{ width: "40px", flexShrink: 0 }} />
           <div style={{ flex: 1 }}>氏名</div>
@@ -268,6 +281,19 @@ function QuotaStepper({ value, onDelta, onChange }) {
       >
         <Plus size={13} />
       </button>
+    </div>
+  );
+}
+
+function MiniTotal({ label, value, target }) {
+  const ok = value === target && target > 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "#6B6B6B" }}>
+      <span>{label}</span>
+      <span className="pf" style={{ fontSize: "13px", color: ok ? "#1E7A34" : "#EE1515" }}>
+        {value}
+        <span style={{ fontSize: "10px", fontFamily: "inherit", fontWeight: 400, color: "#8A8A8A" }}>/{target || "―"}</span>
+      </span>
     </div>
   );
 }

@@ -3,9 +3,11 @@ import MemberManagement from "./MemberManagement";
 import QuotaSetting from "./QuotaSetting";
 import ScheduleRunPanel from "./ScheduleRunPanel";
 import MemberAvailabilityViewer from "./MemberAvailabilityViewer";
+import MissingSubmissions from "./MissingSubmissions";
 
 const SECTIONS = [
   { id: "members", label: "メンバー管理" },
+  { id: "missing", label: "未提出リスト" },
   { id: "availability", label: "個人の希望表" },
   { id: "quota", label: "希望回数設定" },
   { id: "run", label: "自動割当・結果" },
@@ -14,6 +16,7 @@ const SECTIONS = [
 export default function AdminPage() {
   const refs = {
     members: useRef(null),
+    missing: useRef(null),
     availability: useRef(null),
     quota: useRef(null),
     run: useRef(null),
@@ -46,6 +49,7 @@ export default function AdminPage() {
       </div>
 
       <div ref={refs.members}><MemberManagement /></div>
+      <div ref={refs.missing} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><MissingSubmissions /></div>
       <div ref={refs.availability} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><MemberAvailabilityViewer /></div>
       <div ref={refs.quota} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><QuotaSetting /></div>
       <div ref={refs.run} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><ScheduleRunPanel /></div>
