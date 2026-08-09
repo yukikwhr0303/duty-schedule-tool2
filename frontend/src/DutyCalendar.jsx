@@ -242,7 +242,7 @@ export default function DutyCalendar({ member }) {
   const deadlineStatus = getDeadlineStatus(new Date(), year, month);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E", paddingBottom: "100px" }}>
+    <div style={{ minHeight: "100vh", maxWidth: "480px", margin: "0 auto", background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E", paddingBottom: "100px" }}>
       <style>{`
         .pf { font-weight: 700; }
         .poke-window {
@@ -388,7 +388,7 @@ export default function DutyCalendar({ member }) {
       </div>
 
       {/* footer window: submission status */}
-      <div className="poke-window" style={{ position: "fixed", bottom: "10px", left: "14px", right: "14px", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", background: "#FFFFFF" }}>
+      <div className="poke-window" style={{ position: "fixed", bottom: "10px", left: "50%", transform: "translateX(-50%)", width: "calc(100% - 28px)", maxWidth: "452px", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", background: "#FFFFFF" }}>
         <div style={{ fontSize: "12px", color: submission ? "#1E7A34" : "#8A8A8A", display: "flex", alignItems: "center", gap: "6px", lineHeight: 1.5 }}>
           {submission ? (
             <>
@@ -415,8 +415,8 @@ export default function DutyCalendar({ member }) {
 
       {/* modal: command window */}
       {activeDay && draft && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(30,30,30,0.45)", display: "flex", alignItems: "flex-end", zIndex: 50 }} onClick={() => { if (!savingDay) { setActiveDay(null); setDraft(null); } }}>
-          <div className="poke-window" onClick={(e) => e.stopPropagation()} style={{ width: "100%", padding: "20px 18px 24px", borderRadius: "6px 6px 0 0" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(30,30,30,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }} onClick={() => { if (!savingDay) { setActiveDay(null); setDraft(null); } }}>
+          <div className="poke-window" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: "480px", padding: "20px 18px 24px", borderRadius: "6px 6px 0 0" }}>
             <div style={{ fontSize: "16px", fontWeight: 700, color: "#1E1E1E", marginBottom: "4px" }}>
               {month + 1}月{activeDay}日（{WEEKDAY_LABELS[new Date(year, month, activeDay).getDay()]}）
               {holidayName(year, month, activeDay) && (

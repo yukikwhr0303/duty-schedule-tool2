@@ -63,6 +63,9 @@ export default function MemberAvailabilityViewer() {
       .catch((e) => setError(e.message));
   }, []);
 
+  const selectedMember = members.find((m) => m.id === memberId);
+  const isInactive = selectedMember?.is_active === false;
+
   const nDays = daysInMonth(year, month + 1);
   const startWd = new Date(year, month, 1).getDay();
   const cells = useMemo(() => {
@@ -109,8 +112,9 @@ export default function MemberAvailabilityViewer() {
     const wknd = isWeekendOrHoliday(new Date(year, month, day));
     const k = isoDate(year, month + 1, day);
     const existing = entries[k];
-    if (wknd) setDraft(existing || { type: "weekend", amDuty: "ok", pmDuty: "ok", amCall: "ok", pmCall: "ok", note: "" });
-    else setDraft(existing || { type: "weekday", duty: "ok", call: "ok", note: "" });
+    const def = isInactive ? "ng" : "ok";
+    if (wknd) setDraft(existing || { type: "weekend", amDuty: def, pmDuty: def, amCall: def, pmCall: def, note: "" });
+    else setDraft(existing || { type: "weekday", duty: def, call: def, note: "" });
     setActiveDay(day);
   };
 
@@ -147,7 +151,6 @@ export default function MemberAvailabilityViewer() {
   };
 
   const monthName = `${year}/${String(month + 1).padStart(2, "0")}`;
-  const selectedMember = members.find((m) => m.id === memberId);
 
   return (
     <div style={{ background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E" }}>
@@ -201,6 +204,12 @@ export default function MemberAvailabilityViewer() {
         </div>
       </div>
 
+      {isInactive && (
+        <div style={{ margin: "10px 14px 0", padding: "10px 14px", border: "2px solid #8A8A8A", borderRadius: "3px", background: "#F5F5F5", fontSize: "12px", color: "#6B6B6B" }}>
+          {selectedMember?.name}さんは休止中です。未入力の日はデフォルトで「不可」として表示されています。
+        </div>
+      )}
+
       {editMode && (
         <div style={{ margin: "10px 14px 0", padding: "10px 14px", border: "2px solid #FFCB05", borderRadius: "3px", background: "#FFF7E0", fontSize: "12px", color: "#8A6400" }}>
           編集モードです。{selectedMember?.name}さんに代わって希望を変更しています。
@@ -221,12 +230,14 @@ export default function MemberAvailabilityViewer() {
             const hName = isHoliday(dt);
             const k = isoDate(year, month + 1, day);
             const e = entries[k];
-            const allNg = e && (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng");
+            const allNg = e
+              ? (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng")
+              : isInactive;
             const isRedDay = dow === 0 || !!hName;
             const dowTint = isRedDay ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
             const dowBorder = isRedDay ? "#EE1515" : dow === 6 ? "#223A70" : "#1E1E1E";
             const bg = allNg ? "#EE1515" : e ? "#FFCB05" : dowTint;
-            const border = e ? "#1E1E1E" : dowBorder;
+            const border = e || isInactive ? "#1E1E1E" : dowBorder;
             const textColor = allNg ? "#FFFFFF" : e ? "#1E1E1E" : isRedDay ? "#B01010" : dow === 6 ? "#223A70" : "#1E1E1E";
             return (
               <button

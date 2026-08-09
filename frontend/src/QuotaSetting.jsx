@@ -35,8 +35,9 @@ export default function QuotaSetting() {
     reloadQuotas();
   }, [reloadQuotas]);
 
-  const seniors = members.filter((m) => m.rank === "A");
-  const juniors = members.filter((m) => m.rank === "B");
+  const activeMembers = members.filter((m) => m.is_active !== false);
+  const seniors = activeMembers.filter((m) => m.rank === "A");
+  const juniors = activeMembers.filter((m) => m.rank === "B");
   const requiredSlots = period.requiredSlots;
 
   const getQ = (id) => quotas[id] || { duty: 0, oncall: 0 };
@@ -78,7 +79,7 @@ export default function QuotaSetting() {
     setError(null);
     setSavedAt(null);
     try {
-      const items = members.map((m) => {
+      const items = activeMembers.map((m) => {
         const q = getQ(m.id);
         return { member_id: m.id, duty_quota: q.duty, oncall_quota: q.oncall };
       });
@@ -156,7 +157,7 @@ export default function QuotaSetting() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          {members.map((m) => {
+          {activeMembers.map((m) => {
             const q = getQ(m.id);
             return (
               <div
@@ -185,9 +186,9 @@ export default function QuotaSetting() {
               </div>
             );
           })}
-          {members.length === 0 && (
+          {activeMembers.length === 0 && (
             <div style={{ padding: "20px", textAlign: "center", fontSize: "13px", color: "#8A8A8A" }}>
-              メンバーが登録されていません。先にメンバー管理画面で登録してください。
+              在籍中のメンバーが登録されていません。先にメンバー管理画面で登録してください。
             </div>
           )}
         </div>
@@ -228,7 +229,7 @@ export default function QuotaSetting() {
 
         <button
           onClick={save}
-          disabled={saving || members.length === 0 || !period.valid}
+          disabled={saving || activeMembers.length === 0 || !period.valid}
           className="pf"
           style={{
             width: "100%", background: "#1E1E1E", color: "#FFFFFF", border: "2px solid #1E1E1E",
