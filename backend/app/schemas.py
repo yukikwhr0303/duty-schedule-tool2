@@ -17,6 +17,7 @@ class MemberCreate(BaseModel):
 class MemberUpdate(BaseModel):
     name: Optional[str] = None
     rank: Optional[Rank] = None
+    is_active: Optional[bool] = None
 
 
 class MemberOut(BaseModel):
@@ -25,6 +26,12 @@ class MemberOut(BaseModel):
     name: str
     rank: Rank
     has_pin: bool = False
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class MemberReorderRequest(BaseModel):
+    member_ids: List[int]  # この順序でsort_orderを振り直す
 
 
 # ---------- Auth ----------
@@ -47,6 +54,7 @@ class AvailabilityEntry(BaseModel):
     half: Half
     duty_ng: bool = False
     oncall_ng: bool = False
+    note: Optional[str] = None
 
 
 class AvailabilityReplaceRequest(BaseModel):
@@ -63,6 +71,21 @@ class AvailabilityOut(BaseModel):
     half: Half
     duty_ng: bool
     oncall_ng: bool
+    note: Optional[str] = None
+
+
+# ---------- Availability submission(「提出する」記録) ----------
+class SubmissionRequest(BaseModel):
+    period_start: date
+    period_days: int
+
+
+class SubmissionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    member_id: int
+    period_start: date
+    period_days: int
+    submitted_at: datetime
 
 
 # ---------- Quota ----------

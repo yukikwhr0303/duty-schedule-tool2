@@ -1,6 +1,7 @@
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -12,12 +13,13 @@ router = APIRouter(prefix="/members", tags=["members"])
 
 @router.get("", response_model=List[schemas.MemberOut])
 def list_members(db: Session = Depends(get_db)):
-    return db.query(models.Member).order_by(models.Member.id).all()
+    return db.query(models.Member).order_by(models.Member.sort_order, models.Member.id).all()
 
 
 @router.post("", response_model=schemas.MemberOut, status_code=201, dependencies=[Depends(require_admin)])
 def create_member(payload: schemas.MemberCreate, db: Session = Depends(get_db)):
-    m = models.Member(name=payload.name, rank=payload.rank)
+    max_order = db.query(func.max(models.Member.sort_order)).scalar() or 0
+    m = models.Member(name=payload.name, rank=payload.rank, sort_order=max_order + 1)
     db.add(m)
     db.commit()
     db.refresh(m)
@@ -33,9 +35,24 @@ def update_member(member_id: int, payload: schemas.MemberUpdate, db: Session = D
         m.name = payload.name
     if payload.rank is not None:
         m.rank = payload.rank
+    if payload.is_active is not None:
+        m.is_active = payload.is_active
     db.commit()
     db.refresh(m)
     return m
+
+
+@router.patch("/reorder", response_model=List[schemas.MemberOut], dependencies=[Depends(require_admin)])
+def reorder_members(payload: schemas.MemberReorderRequest, db: Session = Depends(get_db)):
+    """渡された member_ids の並び順どおりに sort_order を振り直す(1始まり)。"""
+    members = {m.id: m for m in db.query(models.Member).filter(models.Member.id.in_(payload.member_ids)).all()}
+    missing = set(payload.member_ids) - set(members)
+    if missing:
+        raise HTTPException(400, f"unknown member_id(s): {sorted(missing)}")
+    for i, mid in enumerate(payload.member_ids):
+        members[mid].sort_order = i + 1
+    db.commit()
+    return db.query(models.Member).order_by(models.Member.sort_order, models.Member.id).all()
 
 
 @router.delete("/{member_id}", status_code=204, dependencies=[Depends(require_admin)])

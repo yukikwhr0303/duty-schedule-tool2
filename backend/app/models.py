@@ -15,6 +15,8 @@ class Member(Base):
     name: Mapped[str] = mapped_column(String(100))
     rank: Mapped[str] = mapped_column(String(1))  # "A" or "B"
     pin_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # 初回ログイン時に本人が設定
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # False: 外病院配属などで一時的に対象外
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)  # 表示順(管理者が並び替え可能)
 
     availabilities: Mapped[List["Availability"]] = relationship(
         back_populates="member", cascade="all, delete-orphan"
@@ -42,8 +44,26 @@ class Availability(Base):
     half: Mapped[str] = mapped_column(String(3))  # "ALL" / "AM" / "PM"
     duty_ng: Mapped[bool] = mapped_column(Boolean, default=False)
     oncall_ng: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # 本人が残せる自由記述コメント
 
     member: Mapped["Member"] = relationship(back_populates="availabilities")
+
+
+class AvailabilitySubmission(Base):
+    """「この内容で提出する」を押した記録。対象月ごとに1件。
+    全部「可」で保存対象の行が無い月でも、これがあれば「提出済み」と判定できる。"""
+    __tablename__ = "availability_submissions"
+    __table_args__ = (
+        UniqueConstraint("member_id", "period_start", "period_days", name="uq_submission_member_period"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"))
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_days: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    member: Mapped["Member"] = relationship()
 
 
 class Quota(Base):

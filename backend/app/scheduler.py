@@ -59,7 +59,12 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
     end_date = start_date + timedelta(days=days - 1)
     periods = build_periods(start_date, days)
 
-    members = db.query(models.Member).order_by(models.Member.id).all()
+    members = (
+        db.query(models.Member)
+        .filter(models.Member.is_active.is_(True))
+        .order_by(models.Member.sort_order, models.Member.id)
+        .all()
+    )
     if not members:
         run = models.ScheduleRun(start_date=start_date, days=days, status="ERROR")
         db.add(run)

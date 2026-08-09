@@ -47,7 +47,12 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
         idx = None
 
     role = assignment.role
-    members = {m.id: m for m in db.query(models.Member).all()}
+    members = {m.id: m for m in db.query(models.Member).filter(models.Member.is_active.is_(True)).all()}
+    # 現在の担当者は、後でオフになっていても候補一覧に表示できるよう別途取得しておく
+    if assignment.member_id and assignment.member_id not in members:
+        current = db.get(models.Member, assignment.member_id)
+        if current:
+            members[current.id] = current
 
     # 1) 区分(上級医/下級医)の決定
     required_rank: Optional[str] = None
