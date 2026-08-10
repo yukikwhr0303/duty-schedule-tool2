@@ -160,6 +160,7 @@ export default function QuotaSetting() {
           <div style={{ flex: 1 }}>氏名</div>
           <div style={{ width: "112px", textAlign: "center" }}>当直</div>
           <div style={{ width: "112px", textAlign: "center" }}>オンコール</div>
+          <div style={{ width: "32px", textAlign: "center", flexShrink: 0 }}>計</div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -189,6 +190,9 @@ export default function QuotaSetting() {
 
                 <QuotaStepper value={q.duty} onDelta={(d) => setQuota(m.id, "duty", d)} onChange={(v) => setQuotaValue(m.id, "duty", v)} />
                 <QuotaStepper value={q.oncall} onDelta={(d) => setQuota(m.id, "oncall", d)} onChange={(v) => setQuotaValue(m.id, "oncall", v)} />
+                <div style={{ width: "32px", flexShrink: 0, textAlign: "center", fontSize: "15px", fontWeight: 700, color: "#1E1E1E" }}>
+                  {q.duty + q.oncall}
+                </div>
               </div>
             );
           })}
