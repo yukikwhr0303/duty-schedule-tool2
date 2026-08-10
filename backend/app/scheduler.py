@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 自動割当エンジン(DB駆動版)。scheduler_prototype.py の CP-SAT ロジックを
-FastAPI + SQLAlchemy から呼べる形にしたもの。ロジック自体は変更していない:
+FastAPI + SQLAlchemy から呼べる形にしたもの。
   1. 当直・オンコールは 上級医1名 + 下級医1名 のペア(片方が空なら両方空)
-  2. 当直の連続なし(時系列で隣接する period 同士)
+  2. 当直の連続なし(period一覧で隣接する枠同士。同日の前半→後半も含む)
   3. 土日祝は 前半/後半 で 4枠(当直x2, オンコールx2)
   4. 個人ごとの当直不可/オンコール不可、前半不可/後半可 などの設定に対応
   5. 事前固定枠(fixed)に対応
   6. 個人ごとの希望回数(quota)になるべく近づける
   7. 埋まらない枠は空欄 + 理由を表示
+  8. 暦日ベースの連続禁止ルール:
+     - 当直・オンコールいずれかを担当した状態(covered)が3暦日連続にならないようにする
+       (前半/後半の区別なく、その日のどこかで担当していれば「その日はcovered」として数える)
+     - 「夜間相当の当直」(平日は当直、休日/祝日は後半の当直)が2暦日連続にならないようにする
+       (平日当直→平日当直、休日後半当直→平日当直、休日後半当直→休日後半当直、をまとめて禁止)
 """
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -39,6 +44,20 @@ def build_periods(start: date, days: int):
     return periods
 
 
+def group_periods_by_day(periods):
+    """期間一覧を暦日ごとにグループ化した dict{date: [Period, ...]} を返す。"""
+    by_day = {}
+    for p in periods:
+        by_day.setdefault(p.d, []).append(p)
+    return by_day
+
+
+def night_period_for_day(day_periods):
+    """その日の「代表(夜間相当)当直枠」を返す(平日はALL、休日/祝日は後半PM)。
+    前半(AM)は日中のみのシフトのため、暦日をまたぐ連続当直の判定には使わない。"""
+    return day_periods[0] if len(day_periods) == 1 else next(p for p in day_periods if p.half == "PM")
+
+
 @dataclass
 class Doctor:
     id: int
@@ -58,6 +77,11 @@ class Doctor:
 def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRun:
     end_date = start_date + timedelta(days=days - 1)
     periods = build_periods(start_date, days)
+
+    # 暦日ごとの期間一覧と、暦日ベースの連続禁止ルールで使う「その日の代表当直枠」
+    periods_by_day = group_periods_by_day(periods)
+    ordered_days = sorted(periods_by_day.keys())
+    night_period_by_day = {day: night_period_for_day(periods_by_day[day]) for day in ordered_days}
 
     members = (
         db.query(models.Member)
@@ -169,10 +193,25 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
         for d in doctors:
             model.Add(duty[(p1, d.id)] + duty[(p2, d.id)] <= 1)
 
-    # 「当直またはオンコール」のどちらかを担当した状態(covered)が3期間連続にならないようにする。
-    # 当直同士の連続は上のルールで既に禁止済み(2期間連続すら不可)。
-    # このルールは主に、オンコール2連続の直後/直前に当直やオンコールが入って
-    # 実質3連続の対応になってしまう混在パターンを防ぐためのもの(オンコール2連続まで自体は許可)。
+    # 暦日で連続する2日の「代表(夜間相当)当直枠」同士も連続禁止にする
+    # (平日の当直→平日の当直、休日後半当直→平日の当直、休日後半当直→休日後半当直、
+    #  平日の当直→休日後半当直、をまとめてカバーする)。
+    # 平日→平日、休日後半→平日の組み合わせは上の隣接period間ルールで既にカバーされているが、
+    # period一覧では休日の前半(AM)が間に挟まるケース(休日後半→休日後半、平日→休日後半)は
+    # 上のルールだけでは検知できないため、暦日ベースで改めて禁止する。
+    for i in range(len(ordered_days) - 1):
+        day1, day2 = ordered_days[i], ordered_days[i + 1]
+        if (day2 - day1).days != 1:
+            continue
+        p1, p2 = night_period_by_day[day1], night_period_by_day[day2]
+        for d in doctors:
+            model.Add(duty[(p1, d.id)] + duty[(p2, d.id)] <= 1)
+
+    # 「当直またはオンコール」のどちらかを担当した状態(covered)が3暦日連続にならないようにする
+    # (前半/後半の区別なく、その日のどこかで担当していれば「その日はcovered」として数える)。
+    # 当直そのものの連続は上のルールで既に禁止済み。このルールは主に、オンコール2連続の
+    # 直後/直前に当直やオンコールが入って実質3日連続の対応になってしまう混在パターンを
+    # 防ぐためのもの(オンコール2日連続まで自体は許可)。
     covered = {}
     for p in periods:
         for d in doctors:
@@ -181,10 +220,20 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
             model.Add(covered[(p, d.id)] >= oncall[(p, d.id)])
             model.Add(covered[(p, d.id)] <= duty[(p, d.id)] + oncall[(p, d.id)])
 
-    for i in range(len(periods) - 2):
-        p1, p2, p3 = periods[i], periods[i + 1], periods[i + 2]
+    covered_day = {}
+    for day in ordered_days:
+        day_periods = periods_by_day[day]
         for d in doctors:
-            model.Add(covered[(p1, d.id)] + covered[(p2, d.id)] + covered[(p3, d.id)] <= 2)
+            var = model.NewBoolVar(f"covered_day_{day}_{d.id}")
+            model.AddMaxEquality(var, [covered[(p, d.id)] for p in day_periods])
+            covered_day[(day, d.id)] = var
+
+    for i in range(len(ordered_days) - 2):
+        day1, day2, day3 = ordered_days[i], ordered_days[i + 1], ordered_days[i + 2]
+        if (day2 - day1).days != 1 or (day3 - day2).days != 1:
+            continue
+        for d in doctors:
+            model.Add(covered_day[(day1, d.id)] + covered_day[(day2, d.id)] + covered_day[(day3, d.id)] <= 2)
 
     # NGペア: 同じ期間に、この2人が当直/オンコールのどちらの組み合わせでも一緒にならないようにする
     for a_id, b_id in ng_pairs:

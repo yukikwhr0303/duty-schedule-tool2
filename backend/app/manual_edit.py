@@ -8,15 +8,18 @@
   2. 同じ期間のもう一方の役割(当直/オンコール)に現在入っている人は除外
      (同じ人が同じ期間の当直・オンコール両方を兼ねてしまう二重登録を防ぐため)
   3. その日・その半日・その役割(当直/オンコール)に「不可」を設定している人は除外
-  4. 当直の枠については、時系列で隣接する期間に当直で入っている人は除外(連続当直禁止)
+  4. 当直の枠については、時系列で隣接する期間に当直で入っている人は除外(連続当直禁止。
+     同日の前半→後半も含む。休日/祝日が2日連続する場合の「後半→翌日の後半」も含む)
+  5. 「当直またはオンコール」が3暦日連続にならないようにする(直近3暦日の合計<=2)
 """
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
 from . import models
-from .scheduler import Period, build_periods
+from .scheduler import Period, build_periods, group_periods_by_day, night_period_for_day
 
 
 @dataclass
@@ -78,7 +81,11 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
     ng_ids = {a.member_id for a in avail_rows if getattr(a, ng_field)}
     eligible_ids -= ng_ids
 
-    # 4) 連続当直禁止(当直の枠のみ)
+    periods_by_day = group_periods_by_day(periods)
+    ordered_days = sorted(periods_by_day.keys())
+    today = assignment.date
+
+    # 4) 連続当直禁止(当直の枠のみ)。時系列で隣接する期間(同日の前半→後半も含む)を除外。
     if role == "duty" and idx is not None:
         adjacent_ids = set()
         for neighbor_idx in (idx - 1, idx + 1):
@@ -92,27 +99,47 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                     adjacent_ids.add(neighbor.member_id)
         eligible_ids -= adjacent_ids
 
-    # 5) 「当直またはオンコール」が3期間連続にならないようにする(直近3期間の合計<=2)。
-    #    当直同士の連続は 4) で既に禁止済み。ここは主に、オンコール2連続の前後に
-    #    当直/オンコールが入って実質3連続になる混在パターンを防ぐためのもの。
-    if idx is not None:
+        # 4b) 暦日で連続する2日の「代表(夜間相当)当直枠」同士も連続禁止にする
+        #     (休日後半→休日後半、平日→休日後半、など。period一覧では休日の前半(AM)が
+        #     間に挟まるケースを上の隣接period間ルールだけでは検知できないため個別に追加している)。
+        today_periods = periods_by_day.get(today)
+        today_is_night_slot = bool(today_periods) and assignment.half == night_period_for_day(today_periods).half
+        if today_is_night_slot:
+            for neighbor_day in (today - timedelta(days=1), today + timedelta(days=1)):
+                neighbor_periods = periods_by_day.get(neighbor_day)
+                if not neighbor_periods:
+                    continue
+                neighbor_night = night_period_for_day(neighbor_periods)
+                neighbor_assignment = next(
+                    (
+                        a for a in run.assignments
+                        if a.date == neighbor_night.d and a.half == neighbor_night.half and a.role == "duty"
+                    ),
+                    None,
+                )
+                if neighbor_assignment and neighbor_assignment.member_id:
+                    eligible_ids.discard(neighbor_assignment.member_id)
+
+    # 5) 「当直またはオンコール」が3暦日連続にならないようにする(直近3暦日の合計<=2)。
+    #    当直同士の連続は 4) で既に禁止済み。ここは主に、オンコール2日連続の前後に
+    #    当直/オンコールが入って実質3日連続になる混在パターンを防ぐためのもの。
+    if today in ordered_days:
+        day_idx = ordered_days.index(today)
         exclude_ids = set()
         for offset in (-2, -1, 0):
-            window = [idx + offset, idx + offset + 1, idx + offset + 2]
-            if not all(0 <= w < len(periods) for w in window):
+            window_idxs = [day_idx + offset, day_idx + offset + 1, day_idx + offset + 2]
+            if not all(0 <= w < len(ordered_days) for w in window_idxs):
                 continue
-            other_idxs = [w for w in window if w != idx]
+            window_days = [ordered_days[w] for w in window_idxs]
+            if (window_days[1] - window_days[0]).days != 1 or (window_days[2] - window_days[1]).days != 1:
+                continue  # 暦日として連続していない(間が空いている)場合は対象外
+            other_days = [wd for wd in window_days if wd != today]
             for mid in eligible_ids:
-                covered_count = 0
-                for w in other_idxs:
-                    p = periods[w]
-                    covered = any(
-                        a.member_id == mid
-                        for a in run.assignments
-                        if a.date == p.d and a.half == p.half and a.role in ("duty", "oncall")
-                    )
-                    if covered:
-                        covered_count += 1
+                covered_count = sum(
+                    1
+                    for wd in other_days
+                    if any(a.member_id == mid and a.date == wd and a.role in ("duty", "oncall") for a in run.assignments)
+                )
                 if covered_count >= 2:
                     exclude_ids.add(mid)
         eligible_ids -= exclude_ids
