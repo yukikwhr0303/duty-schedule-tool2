@@ -39,6 +39,17 @@ RED = "FFFF0000"
 BLUE = "FF0070C0"
 
 
+def _surname(name):
+    """「姓 名」を半角/全角スペースで区切って先頭(苗字)だけを取り出す。
+    Python の str.split() は全角スペース(U+3000)も空白として扱うため、
+    引数なしの split() だけで半角/全角どちらの区切りにも対応できる。
+    """
+    if not name:
+        return name
+    parts = name.split()
+    return parts[0] if parts else name
+
+
 def _set_font_color(cell, rgb):
     f = cell.font
     cell.font = Font(name=f.name, size=f.size, bold=f.bold, italic=f.italic, color=rgb)
@@ -129,8 +140,8 @@ def export_xlsx(db: Session, run: models.ScheduleRun) -> io.BytesIO:
                 r = base_row + 1 + i
                 duty_a = slot.get((half, "duty"))
                 oncall_a = slot.get((half, "oncall"))
-                dn = "" if duty_a is None else (members[duty_a.member_id].name if duty_a.member_id in members else "―")
-                on = "" if oncall_a is None else (members[oncall_a.member_id].name if oncall_a.member_id in members else "―")
+                dn = "" if duty_a is None else (_surname(members[duty_a.member_id].name) if duty_a.member_id in members else "―")
+                on = "" if oncall_a is None else (_surname(members[oncall_a.member_id].name) if oncall_a.member_id in members else "―")
                 ws.cell(row=r, column=col, value=dn or None)
                 ws.cell(row=r, column=col + 1, value="/")
                 ws.cell(row=r, column=col + 2, value=on or None)
@@ -146,7 +157,7 @@ def export_xlsx(db: Session, run: models.ScheduleRun) -> io.BytesIO:
 
     for i, m in enumerate(active_members):
         r = TALLY_MEMBER_START_ROW + i
-        ws.cell(row=r, column=7, value=m.name)  # G 氏名
+        ws.cell(row=r, column=7, value=_surname(m.name))  # G 氏名
         ws.cell(row=r, column=8, value=tally[m.id]["duty"])  # H 実:当直
         ws.cell(row=r, column=9, value="/")  # I
         ws.cell(row=r, column=10, value=quota_by_member[m.id].duty_quota if m.id in quota_by_member else 0)  # J 希望:当直

@@ -3,10 +3,12 @@
 自動割当結果に対する手動調整(担当者の入れ替え)のロジック。
 
 候補者の絞り込みルール:
-  1. 差し替え先は、その枠に現在入っている人と同じ区分(上級医/下級医)のみ
-     (空欄の場合は、同じ期間のペアとなる役割から必要な区分を逆算する。両方空欄なら区分は問わない)
-  2. その日・その半日・その役割(当直/オンコール)に「不可」を設定している人は除外
-  3. 当直の枠については、時系列で隣接する期間に当直で入っている人は除外(連続当直禁止)
+  1. 区分(上級医/下級医)は問わない。当直⇔オンコールの入れ替えで上級医⇔下級医を
+     入れ替えたいケースがあるため、その日に空いている人であれば区分を問わず候補にする。
+  2. 同じ期間のもう一方の役割(当直/オンコール)に現在入っている人は除外
+     (同じ人が同じ期間の当直・オンコール両方を兼ねてしまう二重登録を防ぐため)
+  3. その日・その半日・その役割(当直/オンコール)に「不可」を設定している人は除外
+  4. 当直の枠については、時系列で隣接する期間に当直で入っている人は除外(連続当直禁止)
 """
 from dataclasses import dataclass
 from typing import List, Optional
@@ -54,22 +56,19 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
         if current:
             members[current.id] = current
 
-    # 1) 区分(上級医/下級医)の決定
-    required_rank: Optional[str] = None
-    if assignment.member_id and assignment.member_id in members:
-        required_rank = members[assignment.member_id].rank
-    else:
-        sibling_role = "oncall" if role == "duty" else "duty"
-        sibling = next(
-            (a for a in run.assignments if a.date == assignment.date and a.half == assignment.half and a.role == sibling_role),
-            None,
-        )
-        if sibling and sibling.member_id and sibling.member_id in members:
-            required_rank = "B" if members[sibling.member_id].rank == "A" else "A"
+    # 1) 区分(上級医/下級医)は問わない(全員を候補の母集団にする)
+    eligible_ids = set(members.keys())
 
-    eligible_ids = {m.id for m in members.values() if required_rank is None or m.rank == required_rank}
+    # 2) 同じ期間のもう一方の役割に現在入っている人は除外(同一人物の二重登録防止)
+    sibling_role = "oncall" if role == "duty" else "duty"
+    sibling = next(
+        (a for a in run.assignments if a.date == assignment.date and a.half == assignment.half and a.role == sibling_role),
+        None,
+    )
+    if sibling and sibling.member_id:
+        eligible_ids.discard(sibling.member_id)
 
-    # 2) 当日・その役割の不可設定を除外
+    # 3) 当日・その役割の不可設定を除外
     avail_rows = (
         db.query(models.Availability)
         .filter(models.Availability.date == assignment.date, models.Availability.half == assignment.half)
@@ -79,7 +78,7 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
     ng_ids = {a.member_id for a in avail_rows if getattr(a, ng_field)}
     eligible_ids -= ng_ids
 
-    # 3) 連続当直禁止(当直の枠のみ)
+    # 4) 連続当直禁止(当直の枠のみ)
     if role == "duty" and idx is not None:
         adjacent_ids = set()
         for neighbor_idx in (idx - 1, idx + 1):
@@ -93,8 +92,8 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                     adjacent_ids.add(neighbor.member_id)
         eligible_ids -= adjacent_ids
 
-    # 4) 「当直またはオンコール」が3期間連続にならないようにする(直近3期間の合計<=2)。
-    #    当直同士の連続は 3) で既に禁止済み。ここは主に、オンコール2連続の前後に
+    # 5) 「当直またはオンコール」が3期間連続にならないようにする(直近3期間の合計<=2)。
+    #    当直同士の連続は 4) で既に禁止済み。ここは主に、オンコール2連続の前後に
     #    当直/オンコールが入って実質3連続になる混在パターンを防ぐためのもの。
     if idx is not None:
         exclude_ids = set()
@@ -118,7 +117,7 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                     exclude_ids.add(mid)
         eligible_ids -= exclude_ids
 
-    # 5) NGペア除外(この期間のもう一方の役割の担当者とNGペアの人は除外)
+    # 6) NGペア除外(この期間のもう一方の役割の担当者とNGペアの人は除外)
     sibling_role2 = "oncall" if role == "duty" else "duty"
     sibling2 = next(
         (a for a in run.assignments if a.date == assignment.date and a.half == assignment.half and a.role == sibling_role2),

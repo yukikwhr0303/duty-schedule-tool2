@@ -40,6 +40,11 @@ def _build_run_out(db: Session, run: models.ScheduleRun) -> schemas.ScheduleRunO
         if a.member_id in tally:
             tally[a.member_id][a.role] += 1
 
+    # 休止中のメンバーは一覧から除外し、希望回数設定画面と同じ並び順(sort_order → id)にする
+    active_members_sorted = sorted(
+        (m for m in members.values() if m.is_active is not False),
+        key=lambda m: (m.sort_order if m.sort_order is not None else 0, m.id),
+    )
     tally_out = [
         schemas.TallyItem(
             member_id=m.id,
@@ -49,7 +54,7 @@ def _build_run_out(db: Session, run: models.ScheduleRun) -> schemas.ScheduleRunO
             duty_quota=quota_by_member[m.id].duty_quota if m.id in quota_by_member else 0,
             oncall_quota=quota_by_member[m.id].oncall_quota if m.id in quota_by_member else 0,
         )
-        for m in members.values()
+        for m in active_members_sorted
     ]
 
     return schemas.ScheduleRunOut(
