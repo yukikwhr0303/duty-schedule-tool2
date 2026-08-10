@@ -144,6 +144,30 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                     exclude_ids.add(mid)
         eligible_ids -= exclude_ids
 
+    # 5b) 暦日ベースの5)だけだと、休日の前半→後半→翌日のように「period としては3連続だが
+    #     暦日では2日」というすり抜けパターンを防げない(例: 土曜オンコール前半→土曜オンコール後半→
+    #     日曜当直)。これを塞ぐため、period一覧上の単純な3連続も別途禁止する。
+    if idx is not None:
+        exclude_ids2 = set()
+        for offset in (-2, -1, 0):
+            window = [idx + offset, idx + offset + 1, idx + offset + 2]
+            if not all(0 <= w < len(periods) for w in window):
+                continue
+            other_idxs = [w for w in window if w != idx]
+            for mid in eligible_ids:
+                covered_count = sum(
+                    1
+                    for w in other_idxs
+                    if any(
+                        a.member_id == mid and a.date == periods[w].d and a.half == periods[w].half
+                        and a.role in ("duty", "oncall")
+                        for a in run.assignments
+                    )
+                )
+                if covered_count >= 2:
+                    exclude_ids2.add(mid)
+        eligible_ids -= exclude_ids2
+
     # 6) NGペア除外(この期間のもう一方の役割の担当者とNGペアの人は除外)
     sibling_role2 = "oncall" if role == "duty" else "duty"
     sibling2 = next(

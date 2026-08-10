@@ -235,6 +235,15 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
         for d in doctors:
             model.Add(covered_day[(day1, d.id)] + covered_day[(day2, d.id)] + covered_day[(day3, d.id)] <= 2)
 
+    # 上の暦日ベースのルールだけだと、休日の前半・後半を「1日」として1つにまとめてしまうため、
+    # 「休日の前半→後半→翌日」のように period としては3連続でも暦日では2日、という
+    # すり抜けパターンを防げない(例: 土曜オンコール前半→土曜オンコール後半→日曜当直)。
+    # これを塞ぐため、period一覧上で単純に3連続している場合も別途禁止する。
+    for i in range(len(periods) - 2):
+        p1, p2, p3 = periods[i], periods[i + 1], periods[i + 2]
+        for d in doctors:
+            model.Add(covered[(p1, d.id)] + covered[(p2, d.id)] + covered[(p3, d.id)] <= 2)
+
     # NGペア: 同じ期間に、この2人が当直/オンコールのどちらの組み合わせでも一緒にならないようにする
     for a_id, b_id in ng_pairs:
         if a_id not in by_id or b_id not in by_id:
