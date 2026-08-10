@@ -90,7 +90,11 @@ def export_run_xlsx(run_id: int, db: Session = Depends(get_db)):
     run = db.get(models.ScheduleRun, run_id)
     if not run:
         raise HTTPException(404, "schedule run not found")
-    buf = export_xlsx(db, run)
+    try:
+        buf = export_xlsx(db, run)
+    except Exception as e:
+        # 原因をブラウザ側でも確認できるよう詳細メッセージ付きで返す(Renderのログを見なくても分かるように)
+        raise HTTPException(500, f"Excel出力でエラーが発生しました: {type(e).__name__}: {e}")
     filename = f"duty_calendar_{run.start_date}.xlsx"
     return StreamingResponse(
         buf,

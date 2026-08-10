@@ -137,8 +137,10 @@ def export_xlsx(db: Session, run: models.ScheduleRun) -> io.BytesIO:
         d += timedelta(days=1)
 
     # --- 担当回数一覧 ---
-    active_members = [m for m in members.values() if m.is_active]
-    active_members.sort(key=lambda m: (0 if m.rank == "A" else 1, m.sort_order, m.id))
+    # is_active が未設定(None)の古いデータは「在籍中」扱いにする(他画面と同じ挙動)
+    active_members = [m for m in members.values() if m.is_active is not False]
+    # sort_order が未設定(None)のメンバーがいても比較エラーにならないよう 0 扱いにする
+    active_members.sort(key=lambda m: (0 if m.rank == "A" else 1, m.sort_order or 0, m.id))
     seniors = [m for m in active_members if m.rank == "A"]
     juniors = [m for m in active_members if m.rank == "B"]
 

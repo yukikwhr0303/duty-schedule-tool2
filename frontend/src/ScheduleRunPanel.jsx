@@ -9,6 +9,12 @@ function parseDate(s) { return new Date(s + "T00:00:00"); }
 function fmtDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 
+// カレンダー枠内は苗字だけ表示する(「姓 名」を半角/全角スペースで区切って先頭を取る)
+function surname(name) {
+  if (!name) return name;
+  return name.split(/[\s　]+/)[0];
+}
+
 // 開始日〜終了日を含む、日曜始まりの週グリッドを作る(範囲外はnull)
 function buildWeekGrid(startStr, endStr) {
   const start = parseDate(startStr);
@@ -122,6 +128,23 @@ export default function ScheduleRunPanel() {
           box-shadow: 0 3px 0 #1E1E1E;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        .rp-day-cell { min-height: 56px; }
+        .rp-half-row { display: flex; align-items: center; gap: 1px; margin-bottom: 2px; min-width: 0; }
+        .rp-select {
+          flex: 1; min-width: 0; max-width: 48%; border: none; background: none; font-family: inherit;
+          font-size: 10px; font-weight: 700; cursor: pointer; padding: 0;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .rp-slash { color: #C4C4C4; font-size: 9px; flex-shrink: 0; }
+
+        /* スマホでは当直/オンコールを横並びだと苗字が見えなくなるため、縦並びにして枠いっぱいに表示する */
+        @media (max-width: 480px) {
+          .rp-day-cell { min-height: 64px; }
+          .rp-half-row { flex-direction: column; align-items: stretch; gap: 0; }
+          .rp-select { max-width: 100%; font-size: 9px; text-align: left; }
+          .rp-slash { display: none; }
+        }
       `}</style>
 
       <div className="poke-window" style={{ margin: "16px 14px 0", padding: "16px 16px 18px" }}>
@@ -229,12 +252,12 @@ export default function ScheduleRunPanel() {
                     const anyUnfilled = halfKeys.some((h) => (halves[h].duty && !halves[h].duty.member_id) || (halves[h].oncall && !halves[h].oncall.member_id));
                     const bg = anyUnfilled ? "#FFCB05" : dow === 0 ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
                     return (
-                      <div key={di} style={{ minWidth: 0, border: "1.5px solid #1E1E1E", borderRadius: "2px", background: bg, padding: "3px", fontSize: "10px", minHeight: "56px", overflow: "hidden" }}>
+                      <div key={di} className="rp-day-cell" style={{ minWidth: 0, border: "1.5px solid #1E1E1E", borderRadius: "2px", background: bg, padding: "3px", fontSize: "10px", overflow: "hidden" }}>
                         <div style={{ fontWeight: 700, marginBottom: "2px" }}>{d.getDate()}</div>
                         {halfKeys.map((h) => (
-                          <div key={h} style={{ display: "flex", alignItems: "center", gap: "1px", marginBottom: "2px", minWidth: 0 }}>
+                          <div key={h} className="rp-half-row">
                             <AssignSelect runId={currentRun.id} a={halves[h].duty} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
-                            <span style={{ color: "#C4C4C4", fontSize: "9px", flexShrink: 0 }}>/</span>
+                            <span className="rp-slash">/</span>
                             <AssignSelect runId={currentRun.id} a={halves[h].oncall} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
                           </div>
                         ))}
@@ -333,19 +356,16 @@ function AssignSelect({ runId, a, tally, onUpdated }) {
 
   return (
     <select
+      className="rp-select"
       value={a.member_id ?? ""}
       onFocus={loadCandidates}
       onChange={handleChange}
       disabled={patching}
-      style={{
-        flex: 1, minWidth: 0, maxWidth: "48%", border: "none", background: "none", fontFamily: "inherit",
-        fontSize: "10px", fontWeight: 700, color, cursor: "pointer", padding: 0,
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-      }}
+      style={{ color }}
     >
       <option value="">―</option>
       {options.map((c) => (
-        <option key={c.member_id} value={c.member_id}>{c.name}</option>
+        <option key={c.member_id} value={c.member_id}>{surname(c.name)}</option>
       ))}
     </select>
   );
