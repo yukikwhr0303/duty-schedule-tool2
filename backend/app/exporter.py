@@ -1,279 +1,190 @@
 # -*- coding: utf-8 -*-
 """
-割当結果のカレンダー形式 Excel/PDF 出力(DB駆動版)。export_calendar.py のレイアウトを踏襲しつつ、
-月単位ではなく任意の対象期間(start_date 〜 start_date+days-1)を日曜始まりの週グリッドで描画できるよう一般化した。
-上級医/下級医の表記はカレンダー上には出さない。
+割当結果のカレンダー形式 Excel 出力(DB駆動版)。
+
+病院側で実際に使っているExcelテンプレート(backend/app/templates/duty_template.xlsx)を
+そのまま読み込み、日付ごとのセルと担当回数一覧の値だけを書き込んで返す。
+テンプレート側のフォント・罫線・列幅などのスタイルは一切変更しない(値のみ設定)。
+
+テンプレートのレイアウト(「カレンダー」シート):
+  - 1〜28行目: 日曜始まりの週グリッド(最大6週分)。各曜日は3列一組
+    [氏名(当直)列, 区切り"/"列, 氏名(オンコール)列] で構成され、
+    土日祝はAM/PM 2行、平日はAM相当の1行のみを使う。
+  - 30行目以降: 担当回数一覧。氏名 / 実:当直・OC / 希望:当直・OC / 希望合計 / 実合計、
+    および右側に上級医・下級医別の希望合計の内訳ボックス。
 """
 import io
 import os
+from copy import copy
 from datetime import date, timedelta
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
+from openpyxl.styles import Font
 from sqlalchemy.orm import Session
 
 from . import models
 from .holidays import HOLIDAYS
+from .scheduler import build_periods
 
-WD_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "duty_template.xlsx")
+SHEET_NAME = "カレンダー"
 
-_JP_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-    "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
-]
-_pdf_font_registered = False
+WEEKDAY_BASE_COL = 2  # B列 = 日曜列の先頭
+DAY_BLOCK_ROWS = [5, 9, 13, 17, 21, 25]  # テンプレートに用意された6週分の「日付」行
+TALLY_HEADER_ROW = 30
+TALLY_MEMBER_START_ROW = 31
+TALLY_CLEAR_MAX_ROW = 80  # 担当回数一覧エリアをクリアする際の安全マージン込みの上限行
 
-
-def _ensure_pdf_font():
-    global _pdf_font_registered
-    if _pdf_font_registered:
-        return
-    font_path = next((p for p in _JP_FONT_CANDIDATES if os.path.exists(p)), None)
-    if font_path is None:
-        raise RuntimeError("日本語フォントが見つかりません。JP_FONT_PATH を確認してください。")
-    pdfmetrics.registerFont(TTFont("JPFont", font_path))
-    pdfmetrics.registerFont(TTFont("JPFontBold", font_path))
-    _pdf_font_registered = True
+RED = "FFFF0000"
+BLUE = "FF0070C0"
 
 
-def _build_week_grid(start_date: date, end_date: date):
-    """start_date〜end_date を含む、日曜始まりの週の配列を返す(範囲外の日は None)。"""
-    first_sunday = start_date - timedelta(days=(start_date.weekday() + 1) % 7)
-    last_saturday = end_date + timedelta(days=(5 - end_date.weekday()) % 7)
-    weeks = []
-    d = first_sunday
-    while d <= last_saturday:
-        week = []
-        for _ in range(7):
-            week.append(d if start_date <= d <= end_date else None)
-            d += timedelta(days=1)
-        weeks.append(week)
-    return weeks
+def _set_font_color(cell, rgb):
+    f = cell.font
+    cell.font = Font(name=f.name, size=f.size, bold=f.bold, italic=f.italic, color=rgb)
 
 
-def _collect_data(db: Session, run: models.ScheduleRun):
+def _week_index_and_weekday(d: date, first_sunday: date):
+    delta = (d - first_sunday).days
+    return delta // 7, delta % 7
+
+
+def _clear(ws, row, col):
+    # openpyxl の ws.cell(row, col, value=None) は「値未指定」扱いになり実際にはクリアされないため、
+    # 明示的に .value に None を代入する。
+    ws.cell(row=row, column=col).value = None
+
+
+def _clear_calendar_body(ws):
+    for base_row in DAY_BLOCK_ROWS:
+        for wd in range(7):
+            col = WEEKDAY_BASE_COL + wd * 3
+            for r in (base_row, base_row + 1, base_row + 2):
+                _clear(ws, r, col)
+                _clear(ws, r, col + 2)
+
+
+def _clear_tally_body(ws):
+    for r in range(TALLY_MEMBER_START_ROW, TALLY_CLEAR_MAX_ROW):
+        for c in (7, 8, 9, 10, 11, 12, 13, 14, 16):  # G,H,I,J,K,L,M,N,P
+            _clear(ws, r, c)
+    # 内訳ボックス(Q/S列)のラベル・値もクリア
+    for r in (TALLY_HEADER_ROW, TALLY_HEADER_ROW + 1, TALLY_HEADER_ROW + 3, TALLY_HEADER_ROW + 4):
+        _clear(ws, r, 17)  # Q
+        _clear(ws, r, 19)  # S
+
+
+def _collect_export_data(db: Session, run: models.ScheduleRun):
     end_date = run.start_date + timedelta(days=run.days - 1)
     members = {m.id: m for m in db.query(models.Member).all()}
 
-    day_lines = {}  # date -> [line, ...] (ALLなら1行、AM/PMなら2行)
-    tally = {m.id: {"duty": 0, "oncall": 0} for m in members.values()}
-
     by_date_half = {}
+    tally = {m.id: {"duty": 0, "oncall": 0} for m in members.values()}
     for a in run.assignments:
-        by_date_half.setdefault((a.date, a.half), {})[a.role] = a
+        by_date_half.setdefault(a.date, {})[(a.half, a.role)] = a
         if a.member_id in tally:
             tally[a.member_id][a.role] += 1
 
-    d = run.start_date
-    while d <= end_date:
-        halves = ["AM", "PM"] if (d, "AM") in by_date_half or (d, "PM") in by_date_half else ["ALL"]
-        lines = []
-        for half in halves:
-            slot = by_date_half.get((d, half), {})
-            duty_a = slot.get("duty")
-            oncall_a = slot.get("oncall")
-            dn = members[duty_a.member_id].name if duty_a and duty_a.member_id in members else "―"
-            on = members[oncall_a.member_id].name if oncall_a and oncall_a.member_id in members else "―"
-            lines.append(f"{dn} / {on}")
-        day_lines[d] = lines
-        d += timedelta(days=1)
+    quota_rows = (
+        db.query(models.Quota)
+        .filter(models.Quota.period_start == run.start_date, models.Quota.period_days == run.days)
+        .all()
+    )
+    quota_by_member = {q.member_id: q for q in quota_rows}
 
-    return end_date, members, day_lines, tally
+    return end_date, members, by_date_half, tally, quota_by_member
 
 
 def export_xlsx(db: Session, run: models.ScheduleRun) -> io.BytesIO:
-    end_date, members, day_lines, tally = _collect_data(db, run)
-    weeks = _build_week_grid(run.start_date, end_date)
+    end_date, members, by_date_half, tally, quota_by_member = _collect_export_data(db, run)
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "当直表"
+    wb = openpyxl.load_workbook(TEMPLATE_PATH)
+    ws = wb[SHEET_NAME]
 
-    FONT_NAME = "Yu Gothic"
-    sun_font = Font(name=FONT_NAME, color="C0392B", bold=True, size=12)
-    sat_font = Font(name=FONT_NAME, color="2A5FA0", bold=True, size=12)
-    header_font = Font(name=FONT_NAME, bold=True, size=12)
-    pair_font = Font(name=FONT_NAME, size=10)
-    sun_fill = PatternFill("solid", fgColor="FBE9E9")
-    sat_fill = PatternFill("solid", fgColor="E8EBF3")
-    thin = Side(style="thin", color="999999")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ws["A1"] = f"{run.start_date.year}年"
+    ws["B1"] = f"{run.start_date.month}月"
 
-    title = f"{run.start_date:%Y/%m/%d} 〜 {end_date:%Y/%m/%d} 当直・オンコール表"
-    ws.cell(row=1, column=1, value=title).font = Font(name=FONT_NAME, bold=True, size=14)
+    _clear_calendar_body(ws)
+    _clear_tally_body(ws)
 
-    header_row = 3
-    for i, label in enumerate(WD_LABELS):
-        c = ws.cell(row=header_row, column=i + 1, value=label)
-        c.font = sun_font if i == 0 else (sat_font if i == 6 else header_font)
-        c.alignment = Alignment(horizontal="center")
-        c.border = border
+    # --- カレンダー本体 ---
+    first_sunday = run.start_date - timedelta(days=(run.start_date.weekday() + 1) % 7)
+    d = run.start_date
+    while d <= end_date:
+        week_idx, wd = _week_index_and_weekday(d, first_sunday)
+        if week_idx < len(DAY_BLOCK_ROWS):
+            base_row = DAY_BLOCK_ROWS[week_idx]
+            col = WEEKDAY_BASE_COL + wd * 3
 
-    ROW_HEIGHT = 70
-    COL_WIDTH = 17
-    for i in range(7):
-        ws.column_dimensions[get_column_letter(i + 1)].width = COL_WIDTH
+            daynum_cell = ws.cell(row=base_row, column=col, value=d.day)
+            if d.weekday() == 6 or d in HOLIDAYS:
+                _set_font_color(daynum_cell, RED)
+            elif d.weekday() == 5:
+                _set_font_color(daynum_cell, BLUE)
 
-    row_cursor = header_row + 1
-    for week in weeks:
-        ws.row_dimensions[row_cursor].height = ROW_HEIGHT
-        for i, d in enumerate(week):
-            cell = ws.cell(row=row_cursor, column=i + 1)
-            cell.border = border
-            cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
-            cell.font = pair_font
-            if d is None:
-                continue
-            lines = day_lines.get(d, ["/"])
-            holiday_name = HOLIDAYS.get(d, "")
-            day_label = f"{d.day}" + (f" {holiday_name}" if holiday_name else "")
-            cell.value = day_label + "\n" + "\n".join(lines)
+            slot = by_date_half.get(d, {})
+            has_am_pm = any(key[0] in ("AM", "PM") for key in slot)
+            halves = ["AM", "PM"] if has_am_pm else ["ALL"]
+            for i, half in enumerate(halves):
+                r = base_row + 1 + i
+                duty_a = slot.get((half, "duty"))
+                oncall_a = slot.get((half, "oncall"))
+                dn = "" if duty_a is None else (members[duty_a.member_id].name if duty_a.member_id in members else "―")
+                on = "" if oncall_a is None else (members[oncall_a.member_id].name if oncall_a.member_id in members else "―")
+                ws.cell(row=r, column=col, value=dn or None)
+                ws.cell(row=r, column=col + 1, value="/")
+                ws.cell(row=r, column=col + 2, value=on or None)
+        d += timedelta(days=1)
 
-            is_red = (d.weekday() == 6) or (d in HOLIDAYS)
-            is_sat = d.weekday() == 5
-            if is_red:
-                cell.fill = sun_fill
-            elif is_sat:
-                cell.fill = sat_fill
-        row_cursor += 1
+    # --- 担当回数一覧 ---
+    active_members = [m for m in members.values() if m.is_active]
+    active_members.sort(key=lambda m: (0 if m.rank == "A" else 1, m.sort_order, m.id))
+    seniors = [m for m in active_members if m.rank == "A"]
+    juniors = [m for m in active_members if m.rank == "B"]
 
-    sum_start_row = row_cursor + 2
-    ws.cell(row=sum_start_row, column=1, value="担当回数一覧").font = Font(name=FONT_NAME, bold=True, size=12)
-    headers2 = ["氏名", "当直", "オンコール", "合計"]
-    for i, h in enumerate(headers2):
-        c = ws.cell(row=sum_start_row + 1, column=i + 1, value=h)
-        c.font = Font(name=FONT_NAME, bold=True, size=10.5, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="1E1E1E")
-        c.alignment = Alignment(horizontal="center")
-        c.border = border
+    for i, m in enumerate(active_members):
+        r = TALLY_MEMBER_START_ROW + i
+        ws.cell(row=r, column=7, value=m.name)  # G 氏名
+        ws.cell(row=r, column=8, value=tally[m.id]["duty"])  # H 実:当直
+        ws.cell(row=r, column=9, value="/")  # I
+        ws.cell(row=r, column=10, value=quota_by_member[m.id].duty_quota if m.id in quota_by_member else 0)  # J 希望:当直
+        ws.cell(row=r, column=11, value=tally[m.id]["oncall"])  # K 実:オンコール
+        ws.cell(row=r, column=12, value="/")  # L
+        ws.cell(row=r, column=13, value=quota_by_member[m.id].oncall_quota if m.id in quota_by_member else 0)  # M 希望:オンコール
+        ws.cell(row=r, column=14, value=f"=SUM(J{r},M{r})")  # N 希望合計
+        ws.cell(row=r, column=16, value=f"=SUM(H{r},K{r})")  # P 実合計
 
-    for i, m in enumerate(members.values()):
-        r = sum_start_row + 2 + i
-        duty_n = tally[m.id]["duty"]
-        oncall_n = tally[m.id]["oncall"]
-        values = [m.name, duty_n, oncall_n, duty_n + oncall_n]
-        for c_idx, v in enumerate(values, start=1):
-            cell = ws.cell(row=r, column=c_idx, value=v)
-            cell.font = Font(name=FONT_NAME, size=10.5)
-            cell.alignment = Alignment(horizontal="center")
-            cell.border = border
+    total_row = TALLY_MEMBER_START_ROW + len(active_members)
+    ws.cell(row=total_row, column=7, value="total")
+    ws.cell(row=total_row, column=9, value="/")
+    if active_members:
+        ws.cell(row=total_row, column=10, value=f"=SUM(J{TALLY_MEMBER_START_ROW}:J{total_row - 1})")
+        ws.cell(row=total_row, column=13, value=f"=SUM(M{TALLY_MEMBER_START_ROW}:M{total_row - 1})")
+    ws.cell(row=total_row, column=12, value="/")
+
+    necessary_row = total_row + 1
+    required_slots = len(build_periods(run.start_date, run.days))
+    ws.cell(row=necessary_row, column=7, value="必要数")
+    ws.cell(row=necessary_row, column=10, value=required_slots)
+    ws.cell(row=necessary_row, column=13, value=required_slots)
+
+    # 上級医/下級医別の希望合計 内訳ボックス(Q/S列)
+    ws.cell(row=TALLY_HEADER_ROW, column=17, value="下　当直")
+    ws.cell(row=TALLY_HEADER_ROW, column=19, value="上　当直")
+    ws.cell(row=TALLY_HEADER_ROW + 3, column=17, value="下　OC")
+    ws.cell(row=TALLY_HEADER_ROW + 3, column=19, value="上　OC")
+
+    if seniors:
+        s_start, s_end = TALLY_MEMBER_START_ROW, TALLY_MEMBER_START_ROW + len(seniors) - 1
+        ws.cell(row=TALLY_MEMBER_START_ROW, column=19, value=f"=SUM(J{s_start}:J{s_end})")
+        ws.cell(row=TALLY_HEADER_ROW + 4, column=19, value=f"=SUM(M{s_start}:M{s_end})")
+    if juniors:
+        j_start = TALLY_MEMBER_START_ROW + len(seniors)
+        j_end = j_start + len(juniors) - 1
+        ws.cell(row=TALLY_MEMBER_START_ROW, column=17, value=f"=SUM(J{j_start}:J{j_end})")
+        ws.cell(row=TALLY_HEADER_ROW + 4, column=17, value=f"=SUM(M{j_start}:M{j_end})")
 
     buf = io.BytesIO()
     wb.save(buf)
-    buf.seek(0)
-    return buf
-
-
-def export_pdf(db: Session, run: models.ScheduleRun) -> io.BytesIO:
-    _ensure_pdf_font()
-    end_date, members, day_lines, tally = _collect_data(db, run)
-    weeks = _build_week_grid(run.start_date, end_date)
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=landscape(A4), leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm
-    )
-
-    title_style = ParagraphStyle("title", fontName="JPFontBold", fontSize=15)
-    cell_style = ParagraphStyle("cell", fontName="JPFont", fontSize=8, leading=11)
-    daynum_style_normal = ParagraphStyle("daynum", fontName="JPFontBold", fontSize=10, textColor=colors.HexColor("#1E1E1E"))
-    daynum_style_red = ParagraphStyle("daynum_r", fontName="JPFontBold", fontSize=10, textColor=colors.HexColor("#C0392B"))
-    daynum_style_sat = ParagraphStyle("daynum_s", fontName="JPFontBold", fontSize=10, textColor=colors.HexColor("#2A5FA0"))
-
-    story = []
-    story.append(Paragraph(f"{run.start_date:%Y/%m/%d} 〜 {end_date:%Y/%m/%d}　当直・オンコール表", title_style))
-    story.append(Spacer(1, 6))
-
-    table_data = [WD_LABELS]
-    for week in weeks:
-        row_cells = []
-        for d in week:
-            if d is None:
-                row_cells.append("")
-                continue
-            holiday_name = HOLIDAYS.get(d, "")
-            is_red = d.weekday() == 6 or d in HOLIDAYS
-            is_sat = d.weekday() == 5
-            dstyle = daynum_style_red if is_red else (daynum_style_sat if is_sat else daynum_style_normal)
-            day_label = f"{d.day}" + (f" {holiday_name}" if holiday_name else "")
-            lines = day_lines.get(d, ["/"])
-            content = [Paragraph(day_label, dstyle)]
-            for ln in lines:
-                content.append(Paragraph(ln, cell_style))
-            row_cells.append(content)
-        table_data.append(row_cells)
-
-    col_w = (landscape(A4)[0] - 20 * mm) / 7
-    row_heights = [8 * mm] + [26 * mm] * len(weeks)
-    t = Table(table_data, colWidths=[col_w] * 7, rowHeights=row_heights)
-
-    style_cmds = [
-        ("FONTNAME", (0, 0), (-1, 0), "JPFontBold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 10),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E1E1E")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#999999")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-    ]
-    for wi, week in enumerate(weeks, start=1):
-        for i, d in enumerate(week):
-            if d is None:
-                continue
-            is_red = d.weekday() == 6 or d in HOLIDAYS
-            is_sat = d.weekday() == 5
-            if is_red:
-                style_cmds.append(("BACKGROUND", (i, wi), (i, wi), colors.HexColor("#FBE9E9")))
-            elif is_sat:
-                style_cmds.append(("BACKGROUND", (i, wi), (i, wi), colors.HexColor("#E8EBF3")))
-
-    t.setStyle(TableStyle(style_cmds))
-    story.append(t)
-    story.append(Spacer(1, 10))
-
-    tally_data = [["氏名", "当直", "オンコール", "合計"]]
-    for m in members.values():
-        duty_n = tally[m.id]["duty"]
-        oncall_n = tally[m.id]["oncall"]
-        tally_data.append([m.name, str(duty_n), str(oncall_n), str(duty_n + oncall_n)])
-
-    t2 = Table(tally_data, colWidths=[40 * mm, 25 * mm, 30 * mm, 25 * mm])
-    t2.setStyle(
-        TableStyle(
-            [
-                ("FONTNAME", (0, 0), (-1, -1), "JPFont"),
-                ("FONTNAME", (0, 0), (-1, 0), "JPFontBold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 10),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E1E1E")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-            ]
-        )
-    )
-    story.append(
-        KeepTogether(
-            [
-                Paragraph("担当回数一覧", ParagraphStyle("h2", fontName="JPFontBold", fontSize=12)),
-                Spacer(1, 4),
-                t2,
-            ]
-        )
-    )
-
-    doc.build(story)
     buf.seek(0)
     return buf

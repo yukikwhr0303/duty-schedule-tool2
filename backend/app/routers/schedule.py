@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..scheduler import run_scheduler
-from ..exporter import export_xlsx, export_pdf
+from ..exporter import export_xlsx
 from ..manual_edit import get_candidates
 from ..auth import require_admin
 
@@ -95,20 +95,6 @@ def export_run_xlsx(run_id: int, db: Session = Depends(get_db)):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/runs/{run_id}/export.pdf")
-def export_run_pdf(run_id: int, db: Session = Depends(get_db)):
-    run = db.get(models.ScheduleRun, run_id)
-    if not run:
-        raise HTTPException(404, "schedule run not found")
-    buf = export_pdf(db, run)
-    filename = f"duty_calendar_{run.start_date}.pdf"
-    return StreamingResponse(
-        buf,
-        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

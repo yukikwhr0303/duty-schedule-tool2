@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Play, Loader2, FileSpreadsheet, FileText, History } from "lucide-react";
+import { Play, Loader2, FileSpreadsheet, History } from "lucide-react";
 import { runSchedule, listScheduleRuns, getScheduleRun, exportUrl, getCandidates, patchAssignment } from "./api";
 import PeriodPicker from "./PeriodPicker";
 
@@ -214,34 +214,36 @@ export default function ScheduleRunPanel() {
               <span><span style={{ color: NAME_COLOR.under }}>■</span> アンダー(希望より少ない)</span>
               <span><span style={{ color: NAME_COLOR.over }}>■</span> オーバー(希望より多い)</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", textAlign: "center", fontSize: "11px", color: "#6B6B6B", marginBottom: "6px" }}>
-              {WD.map((w, i) => <div key={w} style={{ color: i === 0 ? "#EE1515" : i === 6 ? "#223A70" : "#6B6B6B" }}>{w}</div>)}
-            </div>
-            {weeks.map((week, wi) => (
-              <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: "4px", marginBottom: "4px" }}>
-                {week.map((d, di) => {
-                  if (!d) return <div key={di} />;
-                  const dateStr = fmtDate(d);
-                  const halves = byDateHalf[dateStr] || {};
-                  const halfKeys = Object.keys(halves);
-                  const dow = d.getDay();
-                  const anyUnfilled = halfKeys.some((h) => (halves[h].duty && !halves[h].duty.member_id) || (halves[h].oncall && !halves[h].oncall.member_id));
-                  const bg = anyUnfilled ? "#FFCB05" : dow === 0 ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
-                  return (
-                    <div key={di} style={{ border: "1.5px solid #1E1E1E", borderRadius: "2px", background: bg, padding: "3px", fontSize: "10px", minHeight: "56px" }}>
-                      <div style={{ fontWeight: 700, marginBottom: "2px" }}>{d.getDate()}</div>
-                      {halfKeys.map((h) => (
-                        <div key={h} style={{ display: "flex", alignItems: "center", gap: "1px", marginBottom: "2px" }}>
-                          <AssignSelect runId={currentRun.id} a={halves[h].duty} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
-                          <span style={{ color: "#C4C4C4", fontSize: "9px" }}>/</span>
-                          <AssignSelect runId={currentRun.id} a={halves[h].oncall} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
+            <div style={{ width: "100%", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", textAlign: "center", fontSize: "11px", color: "#6B6B6B", marginBottom: "6px" }}>
+                {WD.map((w, i) => <div key={w} style={{ color: i === 0 ? "#EE1515" : i === 6 ? "#223A70" : "#6B6B6B" }}>{w}</div>)}
               </div>
-            ))}
+              {weeks.map((week, wi) => (
+                <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: "4px", marginBottom: "4px" }}>
+                  {week.map((d, di) => {
+                    if (!d) return <div key={di} />;
+                    const dateStr = fmtDate(d);
+                    const halves = byDateHalf[dateStr] || {};
+                    const halfKeys = Object.keys(halves);
+                    const dow = d.getDay();
+                    const anyUnfilled = halfKeys.some((h) => (halves[h].duty && !halves[h].duty.member_id) || (halves[h].oncall && !halves[h].oncall.member_id));
+                    const bg = anyUnfilled ? "#FFCB05" : dow === 0 ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
+                    return (
+                      <div key={di} style={{ minWidth: 0, border: "1.5px solid #1E1E1E", borderRadius: "2px", background: bg, padding: "3px", fontSize: "10px", minHeight: "56px", overflow: "hidden" }}>
+                        <div style={{ fontWeight: 700, marginBottom: "2px" }}>{d.getDate()}</div>
+                        {halfKeys.map((h) => (
+                          <div key={h} style={{ display: "flex", alignItems: "center", gap: "1px", marginBottom: "2px", minWidth: 0 }}>
+                            <AssignSelect runId={currentRun.id} a={halves[h].duty} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
+                            <span style={{ color: "#C4C4C4", fontSize: "9px", flexShrink: 0 }}>/</span>
+                            <AssignSelect runId={currentRun.id} a={halves[h].oncall} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="poke-window" style={{ margin: "12px 14px 0", padding: "10px" }}>
@@ -272,11 +274,6 @@ export default function ScheduleRunPanel() {
               <a href={exportUrl(currentRun.id, "xlsx")} style={{ flex: 1, textDecoration: "none" }}>
                 <div style={{ border: "2px solid #1E1E1E", borderRadius: "3px", padding: "9px", textAlign: "center", fontSize: "12px", fontWeight: 700, color: "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
                   <FileSpreadsheet size={14} /> Excelで出力
-                </div>
-              </a>
-              <a href={exportUrl(currentRun.id, "pdf")} style={{ flex: 1, textDecoration: "none" }}>
-                <div style={{ border: "2px solid #1E1E1E", borderRadius: "3px", padding: "9px", textAlign: "center", fontSize: "12px", fontWeight: 700, color: "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-                  <FileText size={14} /> PDFで出力
                 </div>
               </a>
             </div>
@@ -343,6 +340,7 @@ function AssignSelect({ runId, a, tally, onUpdated }) {
       style={{
         flex: 1, minWidth: 0, maxWidth: "48%", border: "none", background: "none", fontFamily: "inherit",
         fontSize: "10px", fontWeight: 700, color, cursor: "pointer", padding: 0,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
       }}
     >
       <option value="">―</option>

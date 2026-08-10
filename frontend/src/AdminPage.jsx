@@ -27,32 +27,36 @@ export default function AdminPage() {
   };
 
   return (
-    <div style={{ background: "#FFFFFF", minHeight: "100vh", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", paddingBottom: "24px" }}>
+    <div style={{ background: "#F5F5F5", minHeight: "100vh", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", paddingBottom: "24px" }}>
       <div
         style={{
-          position: "sticky", top: 0, zIndex: 20, display: "flex", gap: "6px",
+          position: "sticky", top: 0, zIndex: 20, display: "flex", gap: "6px", flexWrap: "wrap",
           background: "#FFFFFF", borderBottom: "2px solid #1E1E1E", padding: "10px 14px",
         }}
       >
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => jump(s.id)}
-            style={{
-              border: "1.5px solid #1E1E1E", borderRadius: "3px", padding: "6px 10px",
-              fontSize: "11px", background: "#FFFFFF", color: "#1E1E1E", cursor: "pointer", fontFamily: "inherit",
-            }}
-          >
-            {s.label}
-          </button>
-        ))}
+        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", width: "100%", maxWidth: "900px", margin: "0 auto" }}>
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => jump(s.id)}
+              style={{
+                border: "1.5px solid #1E1E1E", borderRadius: "3px", padding: "6px 10px",
+                fontSize: "11px", background: "#FFFFFF", color: "#1E1E1E", cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div ref={refs.members}><MemberManagement /></div>
-      <div ref={refs.missing} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><MissingSubmissions /></div>
-      <div ref={refs.availability} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><MemberAvailabilityViewer /></div>
-      <div ref={refs.quota} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><QuotaSetting /></div>
-      <div ref={refs.run} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><ScheduleRunPanel /></div>
+      <div style={{ maxWidth: "900px", margin: "0 auto", background: "#FFFFFF" }}>
+        <div ref={refs.members}><MemberManagement /></div>
+        <div ref={refs.missing} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><MissingSubmissions /></div>
+        <div ref={refs.availability} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><MemberAvailabilityViewer /></div>
+        <div ref={refs.quota} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><QuotaSetting /></div>
+        <div ref={refs.run} style={{ marginTop: "8px", borderTop: "8px solid #F5F5F5" }}><ScheduleRunPanel /></div>
+      </div>
     </div>
   );
 }
