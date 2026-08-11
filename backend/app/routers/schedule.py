@@ -57,9 +57,11 @@ def _build_run_out(db: Session, run: models.ScheduleRun) -> schemas.ScheduleRunO
         for m in active_members_sorted
     ]
 
+    has_unfilled = any(a.member_id is None for a in run.assignments)
+
     return schemas.ScheduleRunOut(
         id=run.id, start_date=run.start_date, days=run.days, status=run.status,
-        created_at=run.created_at, has_manual_edits=has_manual_edits,
+        created_at=run.created_at, has_manual_edits=has_manual_edits, has_unfilled=has_unfilled,
         assignments=assignments_out, tally=tally_out,
     )
 
@@ -77,6 +79,7 @@ def list_schedule_runs(db: Session = Depends(get_db)):
         schemas.ScheduleRunSummary(
             id=r.id, start_date=r.start_date, days=r.days, status=r.status, created_at=r.created_at,
             has_manual_edits=any(a.manual_override for a in r.assignments),
+            has_unfilled=any(a.member_id is None for a in r.assignments),
         )
         for r in runs
     ]

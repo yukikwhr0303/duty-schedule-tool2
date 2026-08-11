@@ -37,7 +37,7 @@ function buildWeekGrid(startStr, endStr) {
 
 const STATUS_LABEL = {
   OPTIMAL: { label: "成功(全枠割当)", color: "#1E8A3C" },
-  FEASIBLE: { label: "成功(空欄あり)", color: "#C99A00" },
+  FEASIBLE: { label: "失敗(空欄あり)", color: "#EE1515" },
   INFEASIBLE: { label: "失敗", color: "#EE1515" },
   ERROR: { label: "エラー(メンバー未登録など)", color: "#EE1515" },
 };
@@ -119,7 +119,7 @@ export default function ScheduleRunPanel() {
   // OPTIMAL/FEASIBLE というソルバーのステータスは「解を求められたか」であって
   // 「全枠埋まったか」ではない(制約上どうしても埋められない枠があってもOPTIMALになりうる)。
   // 実際に空欄の割当が残っているかどうかを別途チェックして表示ラベルに反映する。
-  const hasUnfilled = currentRun ? currentRun.assignments.some((a) => !a.member_id) : false;
+  const hasUnfilled = currentRun ? (currentRun.has_unfilled ?? currentRun.assignments.some((a) => !a.member_id)) : false;
   let statusInfo = currentRun ? (STATUS_LABEL[currentRun.status] || { label: currentRun.status, color: "#6B6B6B" }) : null;
   if (currentRun && (currentRun.status === "OPTIMAL" || currentRun.status === "FEASIBLE") && hasUnfilled) {
     statusInfo = STATUS_LABEL.FEASIBLE;
@@ -193,8 +193,11 @@ export default function ScheduleRunPanel() {
           {runsLoading && <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          {runs.map((r) => {
-            const info = STATUS_LABEL[r.status] || { label: r.status, color: "#6B6B6B" };
+          {runs.slice(0, 5).map((r) => {
+            let info = STATUS_LABEL[r.status] || { label: r.status, color: "#6B6B6B" };
+            if ((r.status === "OPTIMAL" || r.status === "FEASIBLE") && r.has_unfilled) {
+              info = STATUS_LABEL.FEASIBLE;
+            }
             const active = currentRun?.id === r.id;
             return (
               <button

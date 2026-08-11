@@ -178,6 +178,7 @@ class ScheduleRunOut(BaseModel):
     status: str
     created_at: datetime
     has_manual_edits: bool
+    has_unfilled: bool = False
     assignments: List[AssignmentOut]
     tally: List[TallyItem]
 
@@ -189,6 +190,7 @@ class ScheduleRunSummary(BaseModel):
     status: str
     created_at: datetime
     has_manual_edits: bool
+    has_unfilled: bool = False
 
 
 # ---------- Manual adjustment ----------
