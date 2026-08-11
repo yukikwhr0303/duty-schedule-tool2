@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Play, Loader2, FileSpreadsheet, History } from "lucide-react";
 import { runSchedule, listScheduleRuns, getScheduleRun, exportUrl, getCandidates, patchAssignment } from "./api";
 import PeriodPicker from "./PeriodPicker";
+import { isHoliday } from "./holidays";
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -115,7 +116,14 @@ export default function ScheduleRunPanel() {
     for (const t of currentRun.tally) tallyByMember[t.member_id] = t;
   }
 
-  const statusInfo = currentRun ? (STATUS_LABEL[currentRun.status] || { label: currentRun.status, color: "#6B6B6B" }) : null;
+  // OPTIMAL/FEASIBLE というソルバーのステータスは「解を求められたか」であって
+  // 「全枠埋まったか」ではない(制約上どうしても埋められない枠があってもOPTIMALになりうる)。
+  // 実際に空欄の割当が残っているかどうかを別途チェックして表示ラベルに反映する。
+  const hasUnfilled = currentRun ? currentRun.assignments.some((a) => !a.member_id) : false;
+  let statusInfo = currentRun ? (STATUS_LABEL[currentRun.status] || { label: currentRun.status, color: "#6B6B6B" }) : null;
+  if (currentRun && (currentRun.status === "OPTIMAL" || currentRun.status === "FEASIBLE") && hasUnfilled) {
+    statusInfo = STATUS_LABEL.FEASIBLE;
+  }
 
   return (
     <div style={{ background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E" }}>
@@ -249,11 +257,13 @@ export default function ScheduleRunPanel() {
                     const halves = byDateHalf[dateStr] || {};
                     const halfKeys = Object.keys(halves);
                     const dow = d.getDay();
+                    const isRedDay = dow === 0 || !!isHoliday(d);
                     const anyUnfilled = halfKeys.some((h) => (halves[h].duty && !halves[h].duty.member_id) || (halves[h].oncall && !halves[h].oncall.member_id));
-                    const bg = anyUnfilled ? "#FFCB05" : dow === 0 ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
+                    const bg = anyUnfilled ? "#FFCB05" : isRedDay ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
+                    const dateColor = anyUnfilled ? "#1E1E1E" : isRedDay ? "#B01010" : dow === 6 ? "#223A70" : "#1E1E1E";
                     return (
                       <div key={di} className="rp-day-cell" style={{ minWidth: 0, border: "1.5px solid #1E1E1E", borderRadius: "2px", background: bg, padding: "3px", fontSize: "10px", overflow: "hidden" }}>
-                        <div style={{ fontWeight: 700, marginBottom: "2px" }}>{d.getDate()}</div>
+                        <div style={{ fontWeight: 700, marginBottom: "2px", color: dateColor }}>{d.getDate()}</div>
                         {halfKeys.map((h) => (
                           <div key={h} className="rp-half-row">
                             <AssignSelect runId={currentRun.id} a={halves[h].duty} tally={tallyByMember} onUpdated={handleAssignmentUpdated} />
@@ -339,16 +349,19 @@ function AssignSelect({ runId, a, tally, onUpdated }) {
     }
   };
 
+  // 表示中の枠が当直/オンコールどちらでも、その人が当直・オンコールいずれかで
+  // 希望回数からズレていれば色をつける(枠の種類とズレている区分が一致している時だけ
+  // 色がつくのは分かりにくいため、区分を問わずズレがあれば常に色をつける)。
   let color = a.manual_override ? "#223A70" : "#1E1E1E";
   if (!a.member_id) {
     color = "#B01010";
   } else {
     const t = tally?.[a.member_id];
     if (t) {
-      const count = a.role === "duty" ? t.duty : t.oncall;
-      const quota = a.role === "duty" ? t.duty_quota : t.oncall_quota;
-      if (count > quota) color = NAME_COLOR.over;
-      else if (count < quota) color = NAME_COLOR.under;
+      const isOver = t.duty > t.duty_quota || t.oncall > t.oncall_quota;
+      const isUnder = t.duty < t.duty_quota || t.oncall < t.oncall_quota;
+      if (isOver) color = NAME_COLOR.over;
+      else if (isUnder) color = NAME_COLOR.under;
     }
   }
 
