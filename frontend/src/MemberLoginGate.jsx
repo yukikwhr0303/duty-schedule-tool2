@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { LogOut } from "lucide-react";
+import { LogOut, Loader2 } from "lucide-react";
 import { listMembers, memberLogin, getMemberSession, setMemberSession, clearMemberSession } from "./api";
 
 // 医局員向けの簡易ログインゲート。氏名を選び、4桁の暗証番号で本人確認する。
@@ -7,6 +7,7 @@ import { listMembers, memberLogin, getMemberSession, setMemberSession, clearMemb
 export default function MemberLoginGate({ children }) {
   const [session, setSession] = useState(() => getMemberSession());
   const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState(null);
@@ -15,12 +16,14 @@ export default function MemberLoginGate({ children }) {
 
   useEffect(() => {
     if (session) return;
+    setMembersLoading(true);
     listMembers()
       .then((ms) => {
         setMembers(ms);
         if (ms.length > 0) setSelectedId((prev) => prev ?? ms[0].id);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e.message))
+      .finally(() => setMembersLoading(false));
   }, [session]);
 
   const pressDigit = (d) => {
@@ -92,49 +95,64 @@ export default function MemberLoginGate({ children }) {
     <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 14px" }}>
       <style>{`
         .poke-window { background: #FFFFFF; border: 3px solid #1E1E1E; border-radius: 4px; box-shadow: 0 3px 0 #1E1E1E; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
       <div className="poke-window" style={{ width: "100%", maxWidth: "360px", padding: "20px" }}>
         <div style={{ fontSize: "13px", fontWeight: 700, marginBottom: "12px" }}>医局員ログイン</div>
 
-        <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "6px" }}>名前を選択</div>
-        <select
-          value={selectedId ?? ""}
-          onChange={(e) => { setSelectedId(Number(e.target.value)); setPin(""); setError(null); }}
-          style={{ width: "100%", padding: "10px 12px", border: "2px solid #1E1E1E", borderRadius: "3px", fontSize: "14px", fontFamily: "inherit", outline: "none", marginBottom: "16px", boxSizing: "border-box" }}
-        >
-          {members.length === 0 && <option value="">(メンバー未登録)</option>}
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-        </select>
-
-        <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "6px" }}>
-          暗証番号(4桁){selectedMember && !selectedMember.has_pin && "（初めての方はここで新しく設定します）"}
-        </div>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} style={{ flex: 1, aspectRatio: "1", border: "2px solid #1E1E1E", borderRadius: "3px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", fontWeight: 700 }}>
-              {i < pin.length ? "●" : ""}
+        {membersLoading ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "24px 4px" }}>
+            <Loader2 size={22} style={{ animation: "spin 1s linear infinite" }} />
+            <div style={{ fontSize: "12px", color: "#6B6B6B", textAlign: "center", lineHeight: 1.6 }}>
+              読み込み中です…
+              <br />
+              しばらく使われていない場合、サーバーの起動に30秒〜1分ほどかかることがあります。
             </div>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "6px" }}>名前を選択</div>
+            <select
+              value={selectedId ?? ""}
+              onChange={(e) => { setSelectedId(Number(e.target.value)); setPin(""); setError(null); }}
+              style={{ width: "100%", padding: "10px 12px", border: "2px solid #1E1E1E", borderRadius: "3px", fontSize: "14px", fontFamily: "inherit", outline: "none", marginBottom: "16px", boxSizing: "border-box" }}
+            >
+              {members.length === 0 && <option value="">(メンバー未登録)</option>}
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
 
-        {error && <div style={{ fontSize: "12px", color: "#EE1515", marginBottom: "8px" }}>{error}</div>}
-        {notice && !error && <div style={{ fontSize: "12px", color: "#223A70", marginBottom: "8px" }}>{notice}</div>}
-        {busy && <div style={{ fontSize: "12px", color: "#8A8A8A", marginBottom: "8px" }}>確認中...</div>}
+            <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "6px" }}>
+              暗証番号(4桁){selectedMember && !selectedMember.has_pin && "（初めての方はここで新しく設定します）"}
+            </div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} style={{ flex: 1, aspectRatio: "1", border: "2px solid #1E1E1E", borderRadius: "3px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", fontWeight: 700 }}>
+                  {i < pin.length ? "●" : ""}
+                </div>
+              ))}
+            </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "6px", marginBottom: "8px" }}>
-          {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-            <button key={d} onClick={() => pressDigit(d)} disabled={busy || !selectedId} style={keypadBtn}>{d}</button>
-          ))}
-          <button onClick={backspace} disabled={busy} style={{ ...keypadBtn, background: "#F1EFE8", fontSize: "12px" }}>削除</button>
-          <button onClick={() => pressDigit("0")} disabled={busy || !selectedId} style={keypadBtn}>0</button>
-          <button onClick={clearPin} disabled={busy} style={{ ...keypadBtn, background: "#F1EFE8", fontSize: "12px" }}>C</button>
-        </div>
+            {error && <div style={{ fontSize: "12px", color: "#EE1515", marginBottom: "8px" }}>{error}</div>}
+            {notice && !error && <div style={{ fontSize: "12px", color: "#223A70", marginBottom: "8px" }}>{notice}</div>}
+            {busy && <div style={{ fontSize: "12px", color: "#8A8A8A", marginBottom: "8px" }}>確認中...</div>}
 
-        <div style={{ fontSize: "11px", color: "#8A8A8A", marginTop: "10px", lineHeight: 1.6 }}>
-          身内向けの簡易な確認です。暗証番号を忘れた場合は管理者にリセットを依頼してください。
-        </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "6px", marginBottom: "8px" }}>
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                <button key={d} onClick={() => pressDigit(d)} disabled={busy || !selectedId} style={keypadBtn}>{d}</button>
+              ))}
+              <button onClick={backspace} disabled={busy} style={{ ...keypadBtn, background: "#F1EFE8", fontSize: "12px" }}>削除</button>
+              <button onClick={() => pressDigit("0")} disabled={busy || !selectedId} style={keypadBtn}>0</button>
+              <button onClick={clearPin} disabled={busy} style={{ ...keypadBtn, background: "#F1EFE8", fontSize: "12px" }}>C</button>
+            </div>
+
+            <div style={{ fontSize: "11px", color: "#8A8A8A", marginTop: "10px", lineHeight: 1.6 }}>
+              身内向けの簡易な確認です。初めてログインする方は、上の暗証番号欄で好きな4桁の番号を
+              入力するとそのまま新しい暗証番号として設定されます。忘れた場合は管理者にリセットを依頼してください。
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
