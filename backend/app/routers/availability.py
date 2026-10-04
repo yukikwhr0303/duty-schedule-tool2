@@ -199,3 +199,53 @@ def list_availability_logs(
         )
         for l in logs
     ]
+
+
+@router.post("/{member_id}/restore-submitted", response_model=List[schemas.AvailabilityOut], dependencies=[Depends(require_admin)])
+def restore_submitted(member_id: int, payload: schemas.SubmissionRequest, db: Session = Depends(get_db)):
+    """管理者用。対象月の希望を「本人が最後に提出した時点の内容」に戻す(代理編集のリセット)。"""
+    member = db.get(models.Member, member_id)
+    if not member:
+        raise HTTPException(404, "member not found")
+    last = (
+        db.query(models.AvailabilityLog)
+        .filter(
+            models.AvailabilityLog.member_id == member_id,
+            models.AvailabilityLog.action == "submit",
+            models.AvailabilityLog.period_start == payload.period_start,
+            models.AvailabilityLog.period_days == payload.period_days,
+        )
+        .order_by(models.AvailabilityLog.at.desc(), models.AvailabilityLog.id.desc())
+        .first()
+    )
+    if not last:
+        raise HTTPException(400, "この月の本人の提出記録がありません")
+
+    start = payload.period_start
+    end = start + timedelta(days=payload.period_days - 1)
+    snapshot = json.loads(last.after_json or "[]")
+    before = _rows_to_dicts(_range_rows(db, member_id, start, end))
+
+    db.query(models.Availability).filter(
+        models.Availability.member_id == member_id,
+        models.Availability.date >= start,
+        models.Availability.date <= end,
+    ).delete()
+    for r in snapshot:
+        db.add(models.Availability(
+            member_id=member_id, date=date.fromisoformat(r["date"]), half=r["half"],
+            duty_ng=r["duty_ng"], oncall_ng=r["oncall_ng"], note=r.get("note"),
+        ))
+    db.flush()
+    if before != snapshot:
+        db.add(models.AvailabilityLog(
+            member_id=member_id, at=_utcnow(), actor="admin", action="save",
+            period_start=start, period_days=payload.period_days, target_date=None,
+            before_json=json.dumps(before, ensure_ascii=False), after_json=json.dumps(snapshot, ensure_ascii=False),
+        ))
+    db.commit()
+    return _range_rows_sorted(db, member_id, start, end)
+
+
+def _range_rows_sorted(db: Session, member_id: int, start: date, end: date):
+    return sorted(_range_rows(db, member_id, start, end), key=lambda r: (r.date, r.half))

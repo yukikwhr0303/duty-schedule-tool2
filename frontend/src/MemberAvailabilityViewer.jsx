@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Moon, Phone, Pencil, Eye, Loader2, Sunrise, Sunset } from "lucide-react";
-import { listMembers, getAvailability, replaceAvailability, getAvailabilityLogs } from "./api";
-import AvailabilityHistory from "./AvailabilityHistory";
+import { listMembers, getAvailability, replaceAvailability, getAvailabilityLogs, restoreSubmittedAvailability } from "./api";
+import { formatJst } from "./deadline";
 import { isHoliday, isWeekendOrHoliday, daysInMonth, isoDate } from "./holidays";
 
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
@@ -54,7 +54,8 @@ export default function MemberAvailabilityViewer() {
   const [activeDay, setActiveDay] = useState(null);
   const [draft, setDraft] = useState(null);
   const [savingDay, setSavingDay] = useState(false);
-  const [logs, setLogs] = useState([]);
+  const [lastSubmit, setLastSubmit] = useState(null);
+  const [restoring, setRestoring] = useState(false);
   const [historyTick, setHistoryTick] = useState(0);
 
   useEffect(() => {
@@ -96,13 +97,8 @@ export default function MemberAvailabilityViewer() {
   useEffect(() => {
     if (!memberId) return;
     getAvailabilityLogs(isoDate(year, month + 1, 1), nDays, memberId)
-      .then((ls) => {
-        // 見せるのは「本人の最終提出時の内容」と「最終の代理変更」の2件だけ
-        const lastSubmit = [...ls].reverse().find((l) => l.action === "submit");
-        const lastAdmin = [...ls].reverse().find((l) => l.action === "save" && l.actor === "admin");
-        setLogs([lastSubmit, lastAdmin].filter(Boolean));
-      })
-      .catch(() => setLogs([]));
+      .then((ls) => setLastSubmit([...ls].reverse().find((l) => l.action === "submit") || null))
+      .catch(() => setLastSubmit(null));
   }, [memberId, year, month, nDays, historyTick]);
 
   const changeMonth = (delta) => {
@@ -165,6 +161,22 @@ export default function MemberAvailabilityViewer() {
   const clearDraft = () => {
     const k = isoDate(year, month + 1, activeDay);
     persistDay(k, null);
+  };
+
+  const restoreSubmitted = async () => {
+    const m = members.find((x) => x.id === memberId);
+    if (!window.confirm(`${m ? m.name : "本人"}さんの${year}/${month + 1}月の希望を、本人が最後に提出した時点の内容に戻します(代理編集の内容は消えます)。よろしいですか？`)) return;
+    setRestoring(true);
+    setError(null);
+    try {
+      await restoreSubmittedAvailability(memberId, isoDate(year, month + 1, 1), nDays);
+      loadMonth();
+      setHistoryTick((t) => t + 1);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRestoring(false);
+    }
   };
 
   const monthName = `${year}/${String(month + 1).padStart(2, "0")}`;
@@ -279,9 +291,22 @@ export default function MemberAvailabilityViewer() {
 
       <div className="poke-window" style={{ margin: "12px 14px 0", padding: "12px 14px" }}>
         <div className="pf" style={{ fontSize: "12px", color: "#6B6B6B", marginBottom: "8px" }}>
-          {monthName}: 本人の最終提出時の内容 と 最終の代理変更(変更前の内容つき)
+          {monthName}: 本人の最終提出時の内容{lastSubmit ? `(${formatJst(lastSubmit.at)}提出)` : ""}
         </div>
-        <AvailabilityHistory logs={logs} emptyText="この月の提出・代理変更の記録はまだありません" />
+        {lastSubmit ? (
+          <>
+            <SubmittedCalendar records={lastSubmit.after || []} year={year} month={month} />
+            <button
+              onClick={restoreSubmitted}
+              disabled={restoring}
+              style={{ width: "100%", marginTop: "10px", padding: "10px", background: "#FFFFFF", color: "#223A70", border: "2px solid #223A70", borderRadius: "3px", fontSize: "12.5px", fontWeight: 700, cursor: restoring ? "default" : "pointer", opacity: restoring ? 0.6 : 1 }}
+            >
+              {restoring ? "戻しています..." : "本人の最終提出時の内容に戻す(代理編集のリセット)"}
+            </button>
+          </>
+        ) : (
+          <div style={{ fontSize: "12px", color: "#8A8A8A" }}>この月の本人の提出記録はまだありません</div>
+        )}
       </div>
 
       {activeDay && draft && (
@@ -363,6 +388,42 @@ export default function MemberAvailabilityViewer() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// 本人が最後に提出した時点の内容を、閲覧専用の小さなカレンダーで表示する
+function SubmittedCalendar({ records, year, month }) {
+  const entries = rowsToEntries(records);
+  const n = daysInMonth(year, month + 1);
+  const startWd = new Date(year, month, 1).getDay();
+  const cells = [];
+  for (let i = 0; i < startWd; i++) cells.push(null);
+  for (let d = 1; d <= n; d++) cells.push(d);
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", textAlign: "center", marginBottom: "4px" }}>
+        {WEEKDAY_LABELS.map((w, i) => (
+          <div key={w} style={{ fontSize: "10.5px", fontWeight: 700, color: i === 0 ? "#EE1515" : i === 6 ? "#223A70" : "#6B6B6B" }}>{w}</div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: "3px" }}>
+        {cells.map((day, idx) => {
+          if (!day) return <div key={idx} />;
+          const e = entries[isoDate(year, month + 1, day)];
+          const allNg = e && (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng");
+          const bg = allNg ? "#EE1515" : e ? "#FFCB05" : "#FFFFFF";
+          return (
+            <div key={idx} title={e?.note || ""} style={{ aspectRatio: "1.3", background: bg, border: "1.5px solid #1E1E1E", borderRadius: "2px", color: allNg ? "#FFFFFF" : "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700 }}>
+              {day}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: "12px", fontSize: "10.5px", color: "#8A8A8A", marginTop: "6px" }}>
+        <LegendDot color="#FFCB05" label="一部不可" />
+        <LegendDot color="#EE1515" label="終日不可" />
+      </div>
     </div>
   );
 }

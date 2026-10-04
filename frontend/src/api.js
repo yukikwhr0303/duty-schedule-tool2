@@ -79,6 +79,11 @@ export const replaceAvailability = (memberId, start, end, entries, { asAdmin = f
     method: "PUT",
     body: JSON.stringify({ start, end, entries }),
   }, { admin: asAdmin });
+export const restoreSubmittedAvailability = (memberId, periodStart, periodDays) =>
+  request(`/availability/${memberId}/restore-submitted`, {
+    method: "POST",
+    body: JSON.stringify({ period_start: periodStart, period_days: periodDays }),
+  }, { admin: true });
 export const getAvailabilityLogs = (periodStart, periodDays, memberId) => {
   const params = new URLSearchParams({ period_start: periodStart, period_days: periodDays });
   if (memberId) params.set("member_id", memberId);

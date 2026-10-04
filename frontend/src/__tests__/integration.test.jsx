@@ -687,28 +687,31 @@ describe("実バックエンドとの結合テスト", () => {
     expect(screen.queryByText(/管理者による代理編集/)).not.toBeInTheDocument();
   });
 
-  it("管理者ページ: 代理編集すると個人の希望表の下に最終の代理変更(変更前の内容つき)が出る", async () => {
+  it("管理者ページ: 本人の最終提出時の内容がカレンダーで見られ、ボタンで代理編集を提出時の状態に戻せる", async () => {
     const user = userEvent.setup();
-    const createRes = await fetch(`${API_BASE}/members`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
-      body: JSON.stringify({ name: "代理編集履歴テスト十一郎", rank: "B" }),
-    });
-    const vm = await createRes.json();
+    const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
+    const vm = await (await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "リセット確認テスト十一郎", rank: "B" }) })).json();
+    const now = new Date();
+    const y = now.getFullYear(), m0 = now.getMonth();
+    const mm = String(m0 + 1).padStart(2, "0");
+    const nDays = new Date(y, m0 + 1, 0).getDate();
+    const day3 = `${y}-${mm}-03`;
+    const dayRow = (d) => ({ date: d, half: "ALL", duty_ng: true, oncall_ng: false });
+    // 本人: 3日を不可にして提出 → 管理者が3日を可に戻す(代理編集)
+    await fetch(`${API_BASE}/availability/${vm.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start: day3, end: day3, entries: [dayRow(day3)] }) });
+    await fetch(`${API_BASE}/availability/${vm.id}/submit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ period_start: `${y}-${mm}-01`, period_days: nDays }) });
+    await fetch(`${API_BASE}/availability/${vm.id}`, { method: "PUT", headers: adminHeaders, body: JSON.stringify({ start: day3, end: day3, entries: [] }) });
 
     render(<MemberAvailabilityViewer />);
-    await waitFor(() => expect(screen.getByText(/代理編集履歴テスト十一郎/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/リセット確認テスト十一郎/)).toBeInTheDocument());
     await user.selectOptions(screen.getByRole("combobox"), String(vm.id));
+    await waitFor(() => expect(screen.getByText(/本人の最終提出時の内容\(/)).toBeInTheDocument());
     window.confirm = () => true;
-    await user.click(screen.getByRole("button", { name: /編集する/ }));
-
-    const dayButtons = screen.getAllByRole("button").filter((b) => /^\d+$/.test(b.textContent || ""));
-    await user.click(dayButtons[0]);
-    await user.click(await screen.findByRole("button", { name: /当直/ }));
-    await user.click(screen.getByRole("button", { name: /保存/ }));
-
-    await waitFor(() => expect(screen.getByText(/管理者による代理編集/)).toBeInTheDocument());
-    expect(screen.getByText(/変更前:/)).toBeInTheDocument();
-    expect(screen.getByText(/1日 当直✕/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /本人の最終提出時の内容に戻す/ }));
+    await waitFor(async () => {
+      const rows = await (await fetch(`${API_BASE}/availability?member_id=${vm.id}&start=${day3}&end=${day3}`)).json();
+      expect(rows.length).toBe(1);
+      expect(rows[0].duty_ng).toBe(true);
+    });
   });
 });
