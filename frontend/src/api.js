@@ -73,11 +73,17 @@ export const getAvailability = (memberId, start, end) => {
   const params = new URLSearchParams({ member_id: memberId, start, end });
   return request(`/availability?${params.toString()}`);
 };
-export const replaceAvailability = (memberId, start, end, entries) =>
+// asAdmin=true の時は管理者パスワードを添付し、履歴に「管理者による代理編集」として記録される
+export const replaceAvailability = (memberId, start, end, entries, { asAdmin = false } = {}) =>
   request(`/availability/${memberId}`, {
     method: "PUT",
     body: JSON.stringify({ start, end, entries }),
-  });
+  }, { admin: asAdmin });
+export const getAvailabilityLogs = (periodStart, periodDays, memberId) => {
+  const params = new URLSearchParams({ period_start: periodStart, period_days: periodDays });
+  if (memberId) params.set("member_id", memberId);
+  return request(`/availability/logs?${params.toString()}`, {}, { admin: true });
+};
 export const submitAvailability = (memberId, periodStart, periodDays) =>
   request(`/availability/${memberId}/submit`, {
     method: "POST",

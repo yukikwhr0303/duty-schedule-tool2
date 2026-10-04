@@ -10,6 +10,8 @@ import MemberLoginGate from "../MemberLoginGate";
 import AdminLoginGate from "../AdminLoginGate";
 import MemberAvailabilityViewer from "../MemberAvailabilityViewer";
 import MissingSubmissions from "../MissingSubmissions";
+import SubmissionLog from "../SubmissionLog";
+import { formatJst } from "../deadline";
 import { setAdminPassword, clearAdminPassword, clearMemberSession } from "../api";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -31,7 +33,8 @@ describe("実バックエンドとの結合テスト", () => {
     await user.type(screen.getByPlaceholderText("氏名を入力"), "テスト太郎");
     await user.click(screen.getByRole("button", { name: /追加/ }));
 
-    await waitFor(() => expect(screen.getByText("テスト太郎")).toBeInTheDocument());
+    // NGペア設定の選択肢にも同名テキストが現れるため、一覧側(先頭)の要素で判定する
+    await waitFor(() => expect(screen.getAllByText("テスト太郎")[0]).toBeInTheDocument());
 
     const res = await fetch(`${API_BASE}/members`);
     const members = await res.json();
@@ -41,9 +44,9 @@ describe("実バックエンドとの結合テスト", () => {
   it("メンバー管理画面: A/Bをタップで切り替えるとバックエンドに反映される", async () => {
     const user = userEvent.setup();
     render(<MemberManagement />);
-    await waitFor(() => expect(screen.getByText("テスト太郎")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("テスト太郎")[0]).toBeInTheDocument());
 
-    const row = screen.getByText("テスト太郎").closest("div");
+    const row = screen.getAllByText("テスト太郎")[0].closest("div");
     const toggleBtn = within(row.parentElement).getByTitle("タップでA/B切り替え");
     await user.click(toggleBtn);
 
@@ -162,18 +165,27 @@ describe("実バックエンドとの結合テスト", () => {
       body: JSON.stringify({ name: "手動テスト上級医2", rank: "A" }),
     });
     const senior2 = await senior2Res.json();
+    const junior2Res = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ name: "手動テスト下級医2", rank: "B" }),
+    });
+    const junior2 = await junior2Res.json();
 
-    // 対象期間: 2026-09-01 〜 3日間。全員1回ずつ希望。
+    // 対象期間: 2026-09-01 〜 2日間(3連続ルールの影響を受けない短さにしておく)。
+    // 手動テスト下級医2はquota 0にして、この期間には自動では割り当てられないようにしておく
+    // (=入れ替え候補として常に空いている状態を保証するため)。
     await fetch(`${API_BASE}/quotas`, {
       method: "PUT",
       headers: adminHeaders,
       body: JSON.stringify({
         period_start: "2026-09-01",
-        period_days: 3,
+        period_days: 2,
         items: [
           { member_id: senior.id, duty_quota: 1, oncall_quota: 1 },
           { member_id: senior2.id, duty_quota: 1, oncall_quota: 1 },
           { member_id: junior.id, duty_quota: 2, oncall_quota: 2 },
+          { member_id: junior2.id, duty_quota: 0, oncall_quota: 0 },
         ],
       }),
     });
@@ -189,33 +201,36 @@ describe("実バックエンドとの結合テスト", () => {
     await user.click(screen.getByText(/日単位で細かく指定する/));
     const dateInputs = document.querySelectorAll('input[type="date"]');
     await user.clear(dateInputs[1]);
-    await user.type(dateInputs[1], "2026-09-03");
+    await user.type(dateInputs[1], "2026-09-02");
 
-    await waitFor(() => expect(screen.getByText(/9\/1.*〜.*9\/3.*3日間/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/9\/1.*〜.*9\/2.*2日間/)).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /スタート/ }));
 
     await waitFor(() => expect(screen.getByText(/成功/)).toBeInTheDocument(), { timeout: 10000 });
 
-    // 結果カレンダーに担当者名(手動テスト下級医)が表示される
-    await waitFor(() => expect(screen.getAllByText(/手動テスト下級医/).length).toBeGreaterThan(0));
+    // 結果カレンダーに担当者名(手動テスト下級医)が表示される(プルダウンの選択中の値として)
+    await waitFor(() => expect(screen.getAllByDisplayValue("手動テスト下級医").length).toBeGreaterThan(0));
 
-    // 当直の担当者名をタップして手動調整モーダルを開く
-    const nameButtons = screen.getAllByText(/手動テスト/);
-    await user.click(nameButtons[0]);
+    // 結果カレンダーのプルダウンで、直接別の下級医候補に入れ替えられる
+    const dutySelect = screen.getAllByDisplayValue("手動テスト下級医")[0];
+    await user.click(dutySelect);
+    await waitFor(() => expect(within(dutySelect).getByText("手動テスト下級医2")).toBeInTheDocument());
+    await user.selectOptions(dutySelect, String(junior2.id));
 
-    await waitFor(() => expect(screen.getByText(/緑=希望回数より少ない人/)).toBeInTheDocument());
-
-    // 候補者一覧が表示され、担当回数/希望回数が見える(オーバー/アンダーの文字ラベルは出さない仕様)
-    await waitFor(() => expect(screen.getAllByText(/(当直|オンコール)\d+\/\d+/).length).toBeGreaterThan(0));
-    expect(screen.queryByText("オーバー")).not.toBeInTheDocument();
-    expect(screen.queryByText("アンダー")).not.toBeInTheDocument();
+    await waitFor(() => expect(dutySelect.value).toBe(String(junior2.id)));
+    // 実行履歴に手動調整済みの印がつく
+    await waitFor(() => expect(screen.getByText(/手動調整あり/)).toBeInTheDocument());
 
     // 出力ボタンは担当回数一覧より後(画面の一番下)に配置されている
     const tallyHeading = screen.getByText("担当回数一覧");
     const exportHeading = screen.getByText("出力");
     const position = tallyHeading.compareDocumentPosition(exportHeading);
     expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // PDF出力は廃止し、Excel出力のみ残っている
+    expect(screen.getByText("Excelで出力")).toBeInTheDocument();
+    expect(screen.queryByText("PDFで出力")).not.toBeInTheDocument();
   });
 
   it("管理者ページ: メンバー管理・希望回数設定・自動割当と結果が1ページにまとまっている", async () => {
@@ -305,10 +320,11 @@ describe("実バックエンドとの結合テスト", () => {
     const user = userEvent.setup();
     render(<MemberManagement />);
 
-    await waitFor(() => expect(screen.getByText(/ログインテスト花子/)).toBeInTheDocument());
+    // NGペア設定の選択肢にも同名テキストが現れるため、一覧側(先頭)の要素で判定する
+    await waitFor(() => expect(screen.getAllByText(/ログインテスト花子/)[0]).toBeInTheDocument());
     expect(screen.getByText("PIN設定済")).toBeInTheDocument();
 
-    const row = screen.getByText("ログインテスト花子").closest("div").parentElement;
+    const row = screen.getAllByText("ログインテスト花子")[0].closest("div").parentElement;
     const resetBtn = within(row).getByTitle("暗証番号をリセット");
 
     const originalConfirm = window.confirm;
@@ -431,9 +447,10 @@ describe("実バックエンドとの結合テスト", () => {
     const mB = await r2.json();
 
     render(<MemberManagement />);
-    await waitFor(() => expect(screen.getByText("並び替えB")).toBeInTheDocument());
+    // NGペア設定の選択肢にも同名テキストが現れるため、一覧側(先頭)の要素で判定する
+    await waitFor(() => expect(screen.getAllByText("並び替えB")[0]).toBeInTheDocument());
 
-    const rowB = screen.getByText("並び替えB").closest("div").parentElement;
+    const rowB = screen.getAllByText("並び替えB")[0].closest("div").parentElement;
     const upBtn = within(rowB).getByTitle("上に移動");
     await user.click(upBtn);
 
@@ -456,9 +473,10 @@ describe("実バックエンドとの結合テスト", () => {
     const m = await r.json();
 
     render(<MemberManagement />);
-    await waitFor(() => expect(screen.getByText("休止テスト五郎")).toBeInTheDocument());
+    // NGペア設定の選択肢にも同名テキストが現れるため、一覧側(先頭)の要素で判定する
+    await waitFor(() => expect(screen.getAllByText("休止テスト五郎")[0]).toBeInTheDocument());
 
-    const row = screen.getByText("休止テスト五郎").closest("div").parentElement;
+    const row = screen.getAllByText("休止テスト五郎")[0].closest("div").parentElement;
     const toggleBtn = within(row).getByText("在籍中");
     await user.click(toggleBtn);
 
@@ -468,6 +486,47 @@ describe("実バックエンドとの結合テスト", () => {
       const members = await res.json();
       const updated = members.find((x) => x.id === m.id);
       expect(updated.is_active).toBe(false);
+    });
+  });
+
+  it("メンバー管理画面: NGペアを登録・削除でき、バックエンドに反映される", async () => {
+    const user = userEvent.setup();
+    const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
+    const r1 = await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "NGテスト一郎", rank: "A" }) });
+    const mA = await r1.json();
+    const r2 = await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "NGテスト二郎", rank: "B" }) });
+    const mB = await r2.json();
+
+    render(<MemberManagement />);
+    // メンバー一覧の取得(非同期)が完了し、NGペアのselect肢にも選択肢が反映されるまで待つ
+    await waitFor(() => expect(screen.getAllByText("NGテスト一郎")[0]).toBeInTheDocument());
+
+    // NGペアの選択肢は「選択」を含め members.length+1 個。値がmember.idの2つのselectを見つける
+    const selects = screen.getAllByRole("combobox").filter((s) => s.textContent.includes("NGテスト一郎"));
+    const [selA, selB] = selects;
+    await user.selectOptions(selA, String(mA.id));
+    await user.selectOptions(selB, String(mB.id));
+
+    await user.click(screen.getByRole("button", { name: "NGペアを登録" }));
+
+    const pairRow = await screen.findByLabelText(/NGペア: NGテスト一郎 と NGテスト二郎/);
+    expect(pairRow).toBeInTheDocument();
+
+    const res = await fetch(`${API_BASE}/ng-pairs`);
+    const pairs = await res.json();
+    const created = pairs.find(
+      (p) => (p.member_a_id === mA.id && p.member_b_id === mB.id) || (p.member_a_id === mB.id && p.member_b_id === mA.id)
+    );
+    expect(created).toBeTruthy();
+
+    // 削除
+    const deleteBtn = screen.getByRole("button", { name: /NGテスト一郎とNGテスト二郎のNGペアを削除/ });
+    await user.click(deleteBtn);
+
+    await waitFor(async () => {
+      const res2 = await fetch(`${API_BASE}/ng-pairs`);
+      const pairs2 = await res2.json();
+      expect(pairs2.some((p) => p.id === created.id)).toBe(false);
     });
   });
 
@@ -493,8 +552,10 @@ describe("実バックエンドとの結合テスト", () => {
     await user.clear(steppers[0]);
     await user.type(steppers[0], "4");
 
-    const seniorDutyLabel = screen.getByText("上級医 当直計");
-    const totalsCell = seniorDutyLabel.parentElement;
+    // 「当直 合計」は上級医+下級医を合算した値(このテストでは上級医だけ4に設定、下級医は0のまま)。
+    // 上部の常時表示ミニ合計と下部の合計チェック欄の2箇所にラベルが出るため、先頭(ミニ合計)を見る
+    const dutyTotalLabel = screen.getAllByText("当直 合計")[0];
+    const totalsCell = dutyTotalLabel.parentElement;
     await waitFor(() => expect(within(totalsCell).getByText("4")).toBeInTheDocument());
   });
 
@@ -582,5 +643,72 @@ describe("実バックエンドとの結合テスト", () => {
     render(<MissingSubmissions />);
     await waitFor(() => expect(screen.getByText(/未提出リスト/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("未提出確認テスト九郎")).toBeInTheDocument());
+  });
+
+  it("日時表示: サーバーのUTC時刻が日本時間(+9時間)で表示される", () => {
+    expect(formatJst("2026-10-04T13:10:30Z")).toBe("10/4(日) 22:10");
+    expect(formatJst("2026-10-04T16:00:00Z")).toBe("10/5(月) 01:00");
+  });
+
+  it("提出状況・履歴: 未提出→提出後に提出日時と提出時の内容が見られる", async () => {
+    const user = userEvent.setup();
+    const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
+    const createRes = await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "履歴確認テスト十郎", rank: "A" }) });
+    const hm = await createRes.json();
+
+    const now = new Date();
+    let ty = now.getFullYear(), tm0 = now.getMonth() + 1;
+    if (tm0 > 11) { tm0 = 0; ty += 1; }
+    const start = `${ty}-${String(tm0 + 1).padStart(2, "0")}-01`;
+    const nDays = new Date(ty, tm0 + 1, 0).getDate();
+    const day5 = `${ty}-${String(tm0 + 1).padStart(2, "0")}-05`;
+
+    render(<SubmissionLog />);
+    await waitFor(() => expect(screen.getByText("履歴確認テスト十郎")).toBeInTheDocument());
+    expect(within(screen.getByText("履歴確認テスト十郎").closest("button")).getByText("未提出")).toBeInTheDocument();
+    cleanup();
+
+    // 中身が空のまま提出 → 管理者が代理で不可を入力
+    await fetch(`${API_BASE}/availability/${hm.id}/submit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ period_start: start, period_days: nDays }) });
+    await fetch(`${API_BASE}/availability/${hm.id}`, {
+      method: "PUT", headers: adminHeaders,
+      body: JSON.stringify({ start: day5, end: day5, entries: [{ date: day5, half: "ALL", duty_ng: true, oncall_ng: false }] }),
+    });
+
+    render(<SubmissionLog />);
+    const nameEl = await screen.findByText("履歴確認テスト十郎");
+    const rowBtn = nameEl.closest("button");
+    await waitFor(() => expect(within(rowBtn).getByText(/最終提出/)).toBeInTheDocument());
+    expect(within(rowBtn).queryByText("提出時の中身が空")).not.toBeInTheDocument();
+
+    // 名前を押すと、提出日時とその時の内容が出る(提出後の代理編集は含まれない)
+    await user.click(rowBtn);
+    await waitFor(() => expect(screen.getByText("提出時点で不可・コメントの入力なし(中身が空)")).toBeInTheDocument());
+    expect(screen.queryByText(/管理者による代理編集/)).not.toBeInTheDocument();
+  });
+
+  it("管理者ページ: 代理編集すると個人の希望表の下に最終の代理変更(変更前の内容つき)が出る", async () => {
+    const user = userEvent.setup();
+    const createRes = await fetch(`${API_BASE}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD },
+      body: JSON.stringify({ name: "代理編集履歴テスト十一郎", rank: "B" }),
+    });
+    const vm = await createRes.json();
+
+    render(<MemberAvailabilityViewer />);
+    await waitFor(() => expect(screen.getByText(/代理編集履歴テスト十一郎/)).toBeInTheDocument());
+    await user.selectOptions(screen.getByRole("combobox"), String(vm.id));
+    window.confirm = () => true;
+    await user.click(screen.getByRole("button", { name: /編集する/ }));
+
+    const dayButtons = screen.getAllByRole("button").filter((b) => /^\d+$/.test(b.textContent || ""));
+    await user.click(dayButtons[0]);
+    await user.click(await screen.findByRole("button", { name: /当直/ }));
+    await user.click(screen.getByRole("button", { name: /保存/ }));
+
+    await waitFor(() => expect(screen.getByText(/管理者による代理編集/)).toBeInTheDocument());
+    expect(screen.getByText(/変更前:/)).toBeInTheDocument();
+    expect(screen.getByText(/1日 当直✕/)).toBeInTheDocument();
   });
 });

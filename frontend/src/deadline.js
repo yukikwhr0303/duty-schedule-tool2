@@ -43,3 +43,16 @@ export function formatDeadlineLabel(dt) {
   const mm = String(dt.getMinutes()).padStart(2, "0");
   return `${dt.getMonth() + 1}/${dt.getDate()}(${w}) ${hh}:${mm}`;
 }
+
+// サーバーから来たUTC時刻(ISO文字列)を、端末の設定に関係なく必ず日本時間で表示する。
+export function formatJst(iso) {
+  if (!iso) return "";
+  const dt = iso instanceof Date ? iso : new Date(iso);
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", weekday: "short",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(dt);
+  const get = (t) => parts.find((p) => p.type === t)?.value || "";
+  const hh = get("hour") === "24" ? "00" : get("hour");
+  return `${get("month")}/${get("day")}(${get("weekday")}) ${hh}:${get("minute")}`;
+}

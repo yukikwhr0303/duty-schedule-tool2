@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Moon, Phone, Pencil, Eye, Loader2, Sunrise, Sunset } from "lucide-react";
-import { listMembers, getAvailability, replaceAvailability } from "./api";
+import { listMembers, getAvailability, replaceAvailability, getAvailabilityLogs } from "./api";
+import AvailabilityHistory from "./AvailabilityHistory";
 import { isHoliday, isWeekendOrHoliday, daysInMonth, isoDate } from "./holidays";
 
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
@@ -53,6 +54,8 @@ export default function MemberAvailabilityViewer() {
   const [activeDay, setActiveDay] = useState(null);
   const [draft, setDraft] = useState(null);
   const [savingDay, setSavingDay] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [historyTick, setHistoryTick] = useState(0);
 
   useEffect(() => {
     listMembers()
@@ -88,6 +91,19 @@ export default function MemberAvailabilityViewer() {
   }, [memberId, year, month, nDays]);
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
+
+  // 選択中メンバー・月の変更履歴(本人の保存/提出・管理者の代理編集。変更前の内容もここで確認できる)
+  useEffect(() => {
+    if (!memberId) return;
+    getAvailabilityLogs(isoDate(year, month + 1, 1), nDays, memberId)
+      .then((ls) => {
+        // 見せるのは「本人の最終提出時の内容」と「最終の代理変更」の2件だけ
+        const lastSubmit = [...ls].reverse().find((l) => l.action === "submit");
+        const lastAdmin = [...ls].reverse().find((l) => l.action === "save" && l.actor === "admin");
+        setLogs([lastSubmit, lastAdmin].filter(Boolean));
+      })
+      .catch(() => setLogs([]));
+  }, [memberId, year, month, nDays, historyTick]);
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -126,7 +142,8 @@ export default function MemberAvailabilityViewer() {
     setError(null);
     try {
       const records = entryOrNull ? entryToRecords(dateStr, entryOrNull) : [];
-      await replaceAvailability(memberId, dateStr, dateStr, records);
+      await replaceAvailability(memberId, dateStr, dateStr, records, { asAdmin: true });
+      setHistoryTick((t) => t + 1);
       setEntries((prev) => {
         const next = { ...prev };
         if (entryOrNull) next[dateStr] = entryOrNull; else delete next[dateStr];
@@ -258,6 +275,13 @@ export default function MemberAvailabilityViewer() {
       <div style={{ padding: "10px 18px 16px", display: "flex", gap: "14px", fontSize: "11.5px", color: "#8A8A8A" }}>
         <LegendDot color="#FFCB05" label="一部不可" />
         <LegendDot color="#EE1515" label="終日不可" />
+      </div>
+
+      <div className="poke-window" style={{ margin: "12px 14px 0", padding: "12px 14px" }}>
+        <div className="pf" style={{ fontSize: "12px", color: "#6B6B6B", marginBottom: "8px" }}>
+          {monthName}: 本人の最終提出時の内容 と 最終の代理変更(変更前の内容つき)
+        </div>
+        <AvailabilityHistory logs={logs} emptyText="この月の提出・代理変更の記録はまだありません" />
       </div>
 
       {activeDay && draft && (

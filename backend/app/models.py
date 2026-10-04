@@ -66,6 +66,25 @@ class AvailabilitySubmission(Base):
     member: Mapped["Member"] = relationship()
 
 
+class AvailabilityLog(Base):
+    """希望入力の変更・提出の履歴(追記専用)。
+    - action="save": 1日分の保存。before_json/after_json にその日の変更前後のレコード(JSON文字列)
+    - action="submit": 「提出する」押下。after_json にその時点の対象月の全レコード(スナップショット)
+    actor は "member"(本人) / "admin"(管理者による代理編集)。時刻はUTCで保存。"""
+    __tablename__ = "availability_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    actor: Mapped[str] = mapped_column(String(10))  # "member" / "admin"
+    action: Mapped[str] = mapped_column(String(10))  # "save" / "submit"
+    period_start: Mapped[date] = mapped_column(Date, index=True)  # 対象月の1日
+    period_days: Mapped[int] = mapped_column(Integer)
+    target_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)  # saveの場合の対象日
+    before_json: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    after_json: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+
 class NgPair(Base):
     """「この2人は当直/オンコールで同じ日に組ませない」というNGペア設定。
     向きは問わない(どちらが当直/オンコールでも組み合わせ自体を禁止)。

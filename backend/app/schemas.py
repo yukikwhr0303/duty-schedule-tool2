@@ -1,9 +1,22 @@
 from datetime import date, datetime
 from typing import Optional, List, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+from datetime import timezone
 
-Half = Literal["ALL", "AM", "PM"]
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+
+
+def _utc_iso(dt: datetime) -> str:
+    # DBにはUTC(タイムゾーン情報なし)で保存されているので、"Z"付きで返してブラウザが正しく日本時間に変換できるようにする
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+UtcDateTime = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str, when_used="json")]
+
+Half =Literal["ALL", "AM", "PM"]
 Role = Literal["duty", "oncall"]
 Rank = Literal["A", "B"]
 
@@ -100,7 +113,22 @@ class SubmissionOut(BaseModel):
     member_id: int
     period_start: date
     period_days: int
-    submitted_at: datetime
+    submitted_at: UtcDateTime
+
+
+class AvailabilityLogOut(BaseModel):
+    """希望入力の履歴1件分。before/after は [{date,half,duty_ng,oncall_ng,note}, ...]。"""
+    id: int
+    member_id: int
+    member_name: str
+    at: UtcDateTime
+    actor: Literal["member", "admin"]
+    action: Literal["save", "submit"]
+    period_start: date
+    period_days: int
+    target_date: Optional[date] = None
+    before: Optional[List[dict]] = None
+    after: Optional[List[dict]] = None
 
 
 # ---------- Quota ----------
@@ -176,7 +204,7 @@ class ScheduleRunOut(BaseModel):
     start_date: date
     days: int
     status: str
-    created_at: datetime
+    created_at: UtcDateTime
     has_manual_edits: bool
     has_unfilled: bool = False
     assignments: List[AssignmentOut]
@@ -188,7 +216,7 @@ class ScheduleRunSummary(BaseModel):
     start_date: date
     days: int
     status: str
-    created_at: datetime
+    created_at: UtcDateTime
     has_manual_edits: bool
     has_unfilled: bool = False
 

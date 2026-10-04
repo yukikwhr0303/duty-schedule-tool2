@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Moon, Phone, Sunrise, Sunset, RefreshCw, Loader2, MessageSquare, CheckCircle2 } from "lucide-react";
 import { getAvailability, replaceAvailability, submitAvailability, getSubmissions } from "./api";
-import { getDeadlineStatus, formatDeadlineLabel } from "./deadline";
+import { getDeadlineStatus, formatDeadlineLabel, formatJst } from "./deadline";
 
 // ---- retro handheld-RPG tokens (v4: black/white, rounded box) ----
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
@@ -393,7 +393,7 @@ export default function DutyCalendar({ member }) {
           {submission ? (
             <>
               <CheckCircle2 size={15} />
-              提出済み（{formatDeadlineLabel(new Date(submission.submitted_at))}）
+              提出済み（{formatJst(submission.submitted_at)}）
             </>
           ) : (
             "この月はまだ提出されていません"
