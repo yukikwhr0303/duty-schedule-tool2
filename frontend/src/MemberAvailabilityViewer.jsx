@@ -54,7 +54,8 @@ export default function MemberAvailabilityViewer() {
   const [activeDay, setActiveDay] = useState(null);
   const [draft, setDraft] = useState(null);
   const [savingDay, setSavingDay] = useState(false);
-  const [lastSubmit, setLastSubmit] = useState(null);
+  const [submits, setSubmits] = useState([]); // 本人の提出履歴(新しい順)
+  const [viewId, setViewId] = useState(null); // null=現在の内容 / 数値=その提出時点の内容を閲覧
   const [restoring, setRestoring] = useState(false);
   const [historyTick, setHistoryTick] = useState(0);
 
@@ -97,8 +98,8 @@ export default function MemberAvailabilityViewer() {
   useEffect(() => {
     if (!memberId) return;
     getAvailabilityLogs(isoDate(year, month + 1, 1), nDays, memberId)
-      .then((ls) => setLastSubmit([...ls].reverse().find((l) => l.action === "submit") || null))
-      .catch(() => setLastSubmit(null));
+      .then((ls) => setSubmits(ls.filter((l) => l.action === "submit").reverse()))
+      .catch(() => setSubmits([]));
   }, [memberId, year, month, nDays, historyTick]);
 
   const changeMonth = (delta) => {
@@ -106,11 +107,13 @@ export default function MemberAvailabilityViewer() {
     if (m < 0) { m = 11; y -= 1; }
     if (m > 11) { m = 0; y += 1; }
     setMonth(m); setYear(y);
+    setViewId(null);
   };
 
   const selectMember = (id) => {
     setMemberId(id);
     setEditMode(false);
+    setViewId(null);
   };
 
   const enterEditMode = () => {
@@ -123,7 +126,7 @@ export default function MemberAvailabilityViewer() {
     if (!day) return;
     const wknd = isWeekendOrHoliday(new Date(year, month, day));
     const k = isoDate(year, month + 1, day);
-    const existing = entries[k];
+    const existing = shownEntries[k];
     const def = isInactive ? "ng" : "ok";
     if (wknd) setDraft(existing || { type: "weekend", amDuty: def, pmDuty: def, amCall: def, pmCall: def, note: "" });
     else setDraft(existing || { type: "weekday", duty: def, call: def, note: "" });
@@ -163,6 +166,11 @@ export default function MemberAvailabilityViewer() {
     persistDay(k, null);
   };
 
+  const lastSubmit = submits[0] || null;
+  const viewLog = viewId ? submits.find((l) => l.id === viewId) || null : null;
+  const shownEntries = viewLog ? rowsToEntries(viewLog.after || []) : entries;
+  const canEdit = editMode && !viewLog;
+
   const restoreSubmitted = async () => {
     const m = members.find((x) => x.id === memberId);
     if (!window.confirm(`${m ? m.name : "本人"}さんの${year}/${month + 1}月の希望を、本人が最後に提出した時点の内容に戻します(代理編集の内容は消えます)。よろしいですか？`)) return;
@@ -171,6 +179,7 @@ export default function MemberAvailabilityViewer() {
     try {
       await restoreSubmittedAvailability(memberId, isoDate(year, month + 1, 1), nDays);
       loadMonth();
+      setViewId(null);
       setHistoryTick((t) => t + 1);
     } catch (e) {
       setError(e.message);
@@ -222,7 +231,7 @@ export default function MemberAvailabilityViewer() {
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
           {editMode ? (
-            <button onClick={() => setEditMode(false)} style={{ ...editBtnStyle, background: "#F1EFE8", color: "#1E1E1E" }}>
+            <button onClick={() => { setEditMode(false); setViewId(null); }} style={{ ...editBtnStyle, background: "#F1EFE8", color: "#1E1E1E" }}>
               <Eye size={13} /> 閲覧のみに戻す
             </button>
           ) : (
@@ -241,7 +250,33 @@ export default function MemberAvailabilityViewer() {
 
       {editMode && (
         <div style={{ margin: "10px 14px 0", padding: "10px 14px", border: "2px solid #FFCB05", borderRadius: "3px", background: "#FFF7E0", fontSize: "12px", color: "#8A6400" }}>
-          編集モードです。{selectedMember?.name}さんに代わって希望を変更しています。
+          <div>編集モードです。{selectedMember?.name}さんに代わって希望を変更しています。</div>
+          <div style={{ fontWeight: 700, margin: "10px 0 6px", color: "#1E1E1E" }}>表示する内容(本人の提出履歴)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <VersionBtn active={!viewLog} onClick={() => setViewId(null)}>
+              現在の内容(編集できます)
+            </VersionBtn>
+            {submits.map((l, i) => (
+              <VersionBtn key={l.id} active={viewId === l.id} onClick={() => setViewId(l.id)}>
+                {formatJst(l.at)} 提出{i === 0 ? "(最終提出)" : ""}
+              </VersionBtn>
+            ))}
+            {submits.length === 0 && <div style={{ color: "#8A8A8A" }}>この月の本人の提出記録はまだありません</div>}
+          </div>
+          {viewLog && (
+            <div style={{ marginTop: "8px", color: "#223A70", fontWeight: 700 }}>
+              過去の提出内容を表示中です(閲覧のみ・編集はできません)
+            </div>
+          )}
+          {lastSubmit && (
+            <button
+              onClick={restoreSubmitted}
+              disabled={restoring}
+              style={{ width: "100%", marginTop: "10px", padding: "10px", background: "#FFFFFF", color: "#223A70", border: "2px solid #223A70", borderRadius: "3px", fontSize: "12.5px", fontWeight: 700, cursor: restoring ? "default" : "pointer", opacity: restoring ? 0.6 : 1 }}
+            >
+              {restoring ? "戻しています..." : "最終提出の内容に戻す(代理編集のリセット)"}
+            </button>
+          )}
         </div>
       )}
 
@@ -258,15 +293,15 @@ export default function MemberAvailabilityViewer() {
             const dow = dt.getDay();
             const hName = isHoliday(dt);
             const k = isoDate(year, month + 1, day);
-            const e = entries[k];
+            const e = shownEntries[k];
             const allNg = e
               ? (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng")
-              : isInactive;
+              : isInactive && !viewLog;
             const isRedDay = dow === 0 || !!hName;
             const dowTint = isRedDay ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
             const dowBorder = isRedDay ? "#EE1515" : dow === 6 ? "#223A70" : "#1E1E1E";
             const bg = allNg ? "#EE1515" : e ? "#FFCB05" : dowTint;
-            const border = e || isInactive ? "#1E1E1E" : dowBorder;
+            const border = e || (isInactive && !viewLog) ? "#1E1E1E" : dowBorder;
             const textColor = allNg ? "#FFFFFF" : e ? "#1E1E1E" : isRedDay ? "#B01010" : dow === 6 ? "#223A70" : "#1E1E1E";
             return (
               <button
@@ -289,26 +324,6 @@ export default function MemberAvailabilityViewer() {
         <LegendDot color="#EE1515" label="終日不可" />
       </div>
 
-      <div className="poke-window" style={{ margin: "12px 14px 0", padding: "12px 14px" }}>
-        <div className="pf" style={{ fontSize: "12px", color: "#6B6B6B", marginBottom: "8px" }}>
-          {monthName}: 本人の最終提出時の内容{lastSubmit ? `(${formatJst(lastSubmit.at)}提出)` : ""}
-        </div>
-        {lastSubmit ? (
-          <>
-            <SubmittedCalendar records={lastSubmit.after || []} year={year} month={month} />
-            <button
-              onClick={restoreSubmitted}
-              disabled={restoring}
-              style={{ width: "100%", marginTop: "10px", padding: "10px", background: "#FFFFFF", color: "#223A70", border: "2px solid #223A70", borderRadius: "3px", fontSize: "12.5px", fontWeight: 700, cursor: restoring ? "default" : "pointer", opacity: restoring ? 0.6 : 1 }}
-            >
-              {restoring ? "戻しています..." : "本人の最終提出時の内容に戻す(代理編集のリセット)"}
-            </button>
-          </>
-        ) : (
-          <div style={{ fontSize: "12px", color: "#8A8A8A" }}>この月の本人の提出記録はまだありません</div>
-        )}
-      </div>
-
       {activeDay && draft && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(30,30,30,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }} onClick={() => { if (!savingDay) { setActiveDay(null); setDraft(null); } }}>
           <div className="poke-window" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: "420px", padding: "20px 18px 24px", borderRadius: "6px 6px 0 0" }}>
@@ -316,12 +331,12 @@ export default function MemberAvailabilityViewer() {
               {month + 1}月{activeDay}日（{WEEKDAY_LABELS[new Date(year, month, activeDay).getDay()]}）
             </div>
             <div style={{ fontSize: "13px", color: "#6B6B6B", marginBottom: "16px" }}>
-              {editMode ? "不可にする枠を選んでください" : "内容を確認できます（閲覧のみ）"}
+              {canEdit ? "不可にする枠を選んでください" : "内容を確認できます（閲覧のみ）"}
             </div>
 
             {draft.type === "weekday" ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {editMode ? (
+                {canEdit ? (
                   <>
                     <FieldRow icon={<Moon size={16} />} label="当直" ng={draft.duty === "ng"} onToggle={() => setDraft({ ...draft, duty: draft.duty === "ng" ? "ok" : "ng" })} />
                     <FieldRow icon={<Phone size={16} />} label="オンコール" ng={draft.call === "ng"} onToggle={() => setDraft({ ...draft, call: draft.call === "ng" ? "ok" : "ng" })} />
@@ -336,7 +351,7 @@ export default function MemberAvailabilityViewer() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 <div style={{ fontSize: "12.5px", fontWeight: 700, display: "flex", alignItems: "center", gap: "5px" }}><Sunrise size={14} /> 前半</div>
-                {editMode ? (
+                {canEdit ? (
                   <>
                     <FieldRow icon={<Moon size={16} />} label="当直" ng={draft.amDuty === "ng"} onToggle={() => setDraft({ ...draft, amDuty: draft.amDuty === "ng" ? "ok" : "ng" })} />
                     <FieldRow icon={<Phone size={16} />} label="オンコール" ng={draft.amCall === "ng"} onToggle={() => setDraft({ ...draft, amCall: draft.amCall === "ng" ? "ok" : "ng" })} />
@@ -348,7 +363,7 @@ export default function MemberAvailabilityViewer() {
                   </>
                 )}
                 <div style={{ fontSize: "12.5px", fontWeight: 700, display: "flex", alignItems: "center", gap: "5px", marginTop: "6px" }}><Sunset size={14} /> 後半</div>
-                {editMode ? (
+                {canEdit ? (
                   <>
                     <FieldRow icon={<Moon size={16} />} label="当直" ng={draft.pmDuty === "ng"} onToggle={() => setDraft({ ...draft, pmDuty: draft.pmDuty === "ng" ? "ok" : "ng" })} />
                     <FieldRow icon={<Phone size={16} />} label="オンコール" ng={draft.pmCall === "ng"} onToggle={() => setDraft({ ...draft, pmCall: draft.pmCall === "ng" ? "ok" : "ng" })} />
@@ -369,7 +384,7 @@ export default function MemberAvailabilityViewer() {
               </div>
             )}
 
-            {editMode ? (
+            {canEdit ? (
               <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
                 <button onClick={clearDraft} disabled={savingDay} style={{ flex: 1, padding: "12px", background: "#FFFFFF", color: "#6B6B6B", border: "2px solid #1E1E1E", borderRadius: "3px", fontSize: "13px", fontWeight: 700, cursor: savingDay ? "default" : "pointer", opacity: savingDay ? 0.6 : 1 }}>
                   全部可に戻す
@@ -392,39 +407,14 @@ export default function MemberAvailabilityViewer() {
   );
 }
 
-// 本人が最後に提出した時点の内容を、閲覧専用の小さなカレンダーで表示する
-function SubmittedCalendar({ records, year, month }) {
-  const entries = rowsToEntries(records);
-  const n = daysInMonth(year, month + 1);
-  const startWd = new Date(year, month, 1).getDay();
-  const cells = [];
-  for (let i = 0; i < startWd; i++) cells.push(null);
-  for (let d = 1; d <= n; d++) cells.push(d);
+function VersionBtn({ active, onClick, children }) {
   return (
-    <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", textAlign: "center", marginBottom: "4px" }}>
-        {WEEKDAY_LABELS.map((w, i) => (
-          <div key={w} style={{ fontSize: "10.5px", fontWeight: 700, color: i === 0 ? "#EE1515" : i === 6 ? "#223A70" : "#6B6B6B" }}>{w}</div>
-        ))}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: "3px" }}>
-        {cells.map((day, idx) => {
-          if (!day) return <div key={idx} />;
-          const e = entries[isoDate(year, month + 1, day)];
-          const allNg = e && (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng");
-          const bg = allNg ? "#EE1515" : e ? "#FFCB05" : "#FFFFFF";
-          return (
-            <div key={idx} title={e?.note || ""} style={{ aspectRatio: "1.3", background: bg, border: "1.5px solid #1E1E1E", borderRadius: "2px", color: allNg ? "#FFFFFF" : "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700 }}>
-              {day}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ display: "flex", gap: "12px", fontSize: "10.5px", color: "#8A8A8A", marginTop: "6px" }}>
-        <LegendDot color="#FFCB05" label="一部不可" />
-        <LegendDot color="#EE1515" label="終日不可" />
-      </div>
-    </div>
+    <button
+      onClick={onClick}
+      style={{ textAlign: "left", padding: "8px 10px", border: `2px solid ${active ? "#1E1E1E" : "#E4E4E4"}`, borderRadius: "3px", background: active ? "#FFFFFF" : "#FFFBEF", color: "#1E1E1E", fontSize: "12.5px", fontWeight: active ? 700 : 400, cursor: "pointer", fontFamily: "inherit" }}
+    >
+      {active ? "● " : "○ "}{children}
+    </button>
   );
 }
 
