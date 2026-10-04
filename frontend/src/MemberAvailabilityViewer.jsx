@@ -170,6 +170,7 @@ export default function MemberAvailabilityViewer() {
   const viewLog = viewId ? submits.find((l) => l.id === viewId) || null : null;
   const shownEntries = viewLog ? rowsToEntries(viewLog.after || []) : entries;
   const canEdit = editMode && !viewLog;
+  const isLastView = !!viewLog && viewLog.id === lastSubmit?.id;
 
   const restoreSubmitted = async () => {
     const m = members.find((x) => x.id === memberId);
@@ -229,7 +230,37 @@ export default function MemberAvailabilityViewer() {
           </div>
           <button onClick={() => changeMonth(1)} style={pixelBtnStyle}><ChevronRight size={16} color="#1E1E1E" /></button>
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
+          {editMode && (
+            <>
+              <button
+                onClick={() => setViewId(null)}
+                style={{ ...editBtnStyle, background: !viewLog ? "#223A70" : "#FFFFFF", color: !viewLog ? "#FFFFFF" : "#223A70" }}
+              >
+                現在の内容
+              </button>
+              <button
+                onClick={() => setViewId(lastSubmit ? lastSubmit.id : null)}
+                disabled={!lastSubmit}
+                title={lastSubmit ? "" : "この月の本人の提出記録はまだありません"}
+                style={{ ...editBtnStyle, background: isLastView ? "#223A70" : "#FFFFFF", color: isLastView ? "#FFFFFF" : "#223A70", opacity: lastSubmit ? 1 : 0.5 }}
+              >
+                本人最終提出時の内容
+              </button>
+              {submits.length > 1 && (
+                <select
+                  value={viewLog && !isLastView ? viewLog.id : ""}
+                  onChange={(e) => setViewId(e.target.value ? Number(e.target.value) : null)}
+                  style={{ ...editBtnStyle, padding: "6px 8px", fontFamily: "inherit" }}
+                >
+                  <option value="">過去の提出を見る</option>
+                  {submits.slice(1).map((l) => (
+                    <option key={l.id} value={l.id}>{formatJst(l.at)} 提出</option>
+                  ))}
+                </select>
+              )}
+            </>
+          )}
           {editMode ? (
             <button onClick={() => { setEditMode(false); setViewId(null); }} style={{ ...editBtnStyle, background: "#F1EFE8", color: "#1E1E1E" }}>
               <Eye size={13} /> 閲覧のみに戻す
@@ -250,32 +281,23 @@ export default function MemberAvailabilityViewer() {
 
       {editMode && (
         <div style={{ margin: "10px 14px 0", padding: "10px 14px", border: "2px solid #FFCB05", borderRadius: "3px", background: "#FFF7E0", fontSize: "12px", color: "#8A6400" }}>
-          <div>編集モードです。{selectedMember?.name}さんに代わって希望を変更しています。</div>
-          <div style={{ fontWeight: 700, margin: "10px 0 6px", color: "#1E1E1E" }}>表示する内容(本人の提出履歴)</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-            <VersionBtn active={!viewLog} onClick={() => setViewId(null)}>
-              現在の内容(編集できます)
-            </VersionBtn>
-            {submits.map((l, i) => (
-              <VersionBtn key={l.id} active={viewId === l.id} onClick={() => setViewId(l.id)}>
-                {formatJst(l.at)} 提出{i === 0 ? "(最終提出)" : ""}
-              </VersionBtn>
-            ))}
-            {submits.length === 0 && <div style={{ color: "#8A8A8A" }}>この月の本人の提出記録はまだありません</div>}
-          </div>
-          {viewLog && (
-            <div style={{ marginTop: "8px", color: "#223A70", fontWeight: 700 }}>
-              過去の提出内容を表示中です(閲覧のみ・編集はできません)
-            </div>
-          )}
-          {lastSubmit && (
-            <button
-              onClick={restoreSubmitted}
-              disabled={restoring}
-              style={{ width: "100%", marginTop: "10px", padding: "10px", background: "#FFFFFF", color: "#223A70", border: "2px solid #223A70", borderRadius: "3px", fontSize: "12.5px", fontWeight: 700, cursor: restoring ? "default" : "pointer", opacity: restoring ? 0.6 : 1 }}
-            >
-              {restoring ? "戻しています..." : "最終提出の内容に戻す(代理編集のリセット)"}
-            </button>
+          {!viewLog ? (
+            <div>編集モードです。{selectedMember?.name}さんに代わって希望を変更しています。</div>
+          ) : (
+            <>
+              <div style={{ color: "#223A70", fontWeight: 700 }}>
+                {formatJst(viewLog.at)} に本人が提出した内容を表示中です(閲覧のみ)
+              </div>
+              {isLastView && (
+                <button
+                  onClick={restoreSubmitted}
+                  disabled={restoring}
+                  style={{ width: "100%", marginTop: "8px", padding: "10px", background: "#FFFFFF", color: "#223A70", border: "2px solid #223A70", borderRadius: "3px", fontSize: "12.5px", fontWeight: 700, cursor: restoring ? "default" : "pointer", opacity: restoring ? 0.6 : 1 }}
+                >
+                  {restoring ? "戻しています..." : "この内容に戻す(代理編集のリセット)"}
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -404,17 +426,6 @@ export default function MemberAvailabilityViewer() {
         </div>
       )}
     </div>
-  );
-}
-
-function VersionBtn({ active, onClick, children }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{ textAlign: "left", padding: "8px 10px", border: `2px solid ${active ? "#1E1E1E" : "#E4E4E4"}`, borderRadius: "3px", background: active ? "#FFFFFF" : "#FFFBEF", color: "#1E1E1E", fontSize: "12.5px", fontWeight: active ? 700 : 400, cursor: "pointer", fontFamily: "inherit" }}
-    >
-      {active ? "● " : "○ "}{children}
-    </button>
   );
 }
 

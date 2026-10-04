@@ -708,10 +708,9 @@ describe("実バックエンドとの結合テスト", () => {
     window.confirm = () => true;
     await user.click(screen.getByRole("button", { name: /編集する/ }));
     // 編集モードで本人の提出履歴(最終提出)が選べる。過去の提出を選ぶと閲覧のみ表示になる
-    const histBtn = await screen.findByRole("button", { name: /\(最終提出\)/ });
-    await user.click(histBtn);
-    await waitFor(() => expect(screen.getByText(/過去の提出内容を表示中/)).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /最終提出の内容に戻す/ }));
+    await user.click(await screen.findByRole("button", { name: "本人最終提出時の内容" }));
+    await waitFor(() => expect(screen.getByText(/に本人が提出した内容を表示中/)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /この内容に戻す/ }));
     await waitFor(async () => {
       const rows = await (await fetch(`${API_BASE}/availability?member_id=${vm.id}&start=${day3}&end=${day3}`)).json();
       expect(rows.length).toBe(1);
