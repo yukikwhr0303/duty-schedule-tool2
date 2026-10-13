@@ -12,6 +12,7 @@ FastAPI + SQLAlchemy から呼べる形にしたもの。
   8. 暦日ベースの連続禁止ルール:
      - 当直・オンコールいずれかを担当した状態(covered)が3暦日連続にならないようにする
        (前半/後半の区別なく、その日のどこかで担当していれば「その日はcovered」として数える)
+     - 連続する2暦日の間に、当直・オンコールを合わせて3枠以上入らないようにする(最大2枠)
      - 「夜間相当の当直」(平日は当直、休日/祝日は後半の当直)が2暦日連続にならないようにする
        (平日当直→平日当直、休日後半当直→平日当直、休日後半当直→休日後半当直、をまとめて禁止)
 """
@@ -234,6 +235,16 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
             continue
         for d in doctors:
             model.Add(covered_day[(day1, d.id)] + covered_day[(day2, d.id)] + covered_day[(day3, d.id)] <= 2)
+
+    # 連続する2暦日の間では、当直・オンコールを合わせて最大2枠まで(休日の前半・後半は別々に数える)。
+    # 例: 日曜の前半+月曜の前半+月曜の後半のように、2日間で3枠入る形を禁止する。
+    for i in range(len(ordered_days) - 1):
+        day1, day2 = ordered_days[i], ordered_days[i + 1]
+        if (day2 - day1).days != 1:
+            continue
+        window_periods = periods_by_day[day1] + periods_by_day[day2]
+        for d in doctors:
+            model.Add(sum(covered[(p, d.id)] for p in window_periods) <= 2)
 
     # 上の暦日ベースのルールだけだと、休日の前半・後半を「1日」として1つにまとめてしまうため、
     # 「休日の前半→後半→翌日」のように period としては3連続でも暦日では2日、という

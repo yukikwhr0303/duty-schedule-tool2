@@ -11,6 +11,7 @@
   4. 当直の枠については、時系列で隣接する期間に当直で入っている人は除外(連続当直禁止。
      同日の前半→後半も含む。休日/祝日が2日連続する場合の「後半→翌日の後半」も含む)
   5. 「当直またはオンコール」が3暦日連続にならないようにする(直近3暦日の合計<=2)
+  6. 連続する2暦日の間に当直・オンコールが3枠以上入らないようにする(最大2枠)
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -167,6 +168,27 @@ def get_candidates(db: Session, run: models.ScheduleRun, assignment: models.Assi
                 if covered_count >= 2:
                     exclude_ids2.add(mid)
         eligible_ids -= exclude_ids2
+
+    # 5c) 連続する2暦日の間で、当直・オンコール合わせて3枠以上にならないようにする(最大2枠)。
+    if today in ordered_days:
+        exclude_ids3 = set()
+        for neighbor_day in (today - timedelta(days=1), today + timedelta(days=1)):
+            if neighbor_day not in periods_by_day:
+                continue
+            window = periods_by_day[today] + periods_by_day[neighbor_day]
+            others = [p for p in window if not (p.d == assignment.date and p.half == assignment.half)]
+            for mid in eligible_ids:
+                covered_count = sum(
+                    1
+                    for p in others
+                    if any(
+                        a.member_id == mid and a.date == p.d and a.half == p.half and a.role in ("duty", "oncall")
+                        for a in run.assignments
+                    )
+                )
+                if covered_count >= 2:
+                    exclude_ids3.add(mid)
+        eligible_ids -= exclude_ids3
 
     # 6) NGペア除外(この期間のもう一方の役割の担当者とNGペアの人は除外)
     sibling_role2 = "oncall" if role == "duty" else "duty"
