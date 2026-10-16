@@ -9,6 +9,7 @@ FastAPI + SQLAlchemy から呼べる形にしたもの。
   5. 事前固定枠(fixed)に対応
   6. 個人ごとの希望回数(quota)になるべく近づける
   7. 埋まらない枠は空欄 + 理由を表示
+  7b. (優先度低)連続する勤務帯に同じ人が入る回数はなるべく少なくする(ソフト制約・減点方式)
   8. 暦日ベースの連続禁止ルール:
      - 当直・オンコールいずれかを担当した状態(covered)が3暦日連続にならないようにする
        (前半/後半の区別なく、その日のどこかで担当していれば「その日はcovered」として数える)
@@ -288,9 +289,21 @@ def run_scheduler(db: Session, start_date: date, days: int) -> models.ScheduleRu
         model.AddAbsEquality(abs_dev_oncall, dev_oncall)
         quota_dev.append(abs_dev_oncall)
 
+    # 優先度の低い「なるべく」ルール: 連続する勤務帯(period一覧で隣り合う枠。休日の前半→後半も含む)に
+    # 同じ人が入る回数をなるべく少なくする。ゼロにできない場合もあるので禁止ではなく減点(ソフト制約)にしている。
+    adjacent_pen = []
+    for i in range(len(periods) - 1):
+        p1, p2 = periods[i], periods[i + 1]
+        for d in doctors:
+            v = model.NewBoolVar(f"adj_{i}_{d.id}")
+            model.Add(v >= covered[(p1, d.id)] + covered[(p2, d.id)] - 1)
+            adjacent_pen.append(v)
+
+    # 重みの優先順: 空欄を作らない(1000) > 希望回数に合わせる(10) > 連続勤務帯を減らす(1)
     unfilled_penalty = sum((1 - duty_filled[p]) for p in periods) * 1000
-    quota_penalty = sum(quota_dev)
-    model.Minimize(unfilled_penalty + quota_penalty)
+    quota_penalty = sum(quota_dev) * 10
+    adjacent_penalty = sum(adjacent_pen)
+    model.Minimize(unfilled_penalty + quota_penalty + adjacent_penalty)
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 15

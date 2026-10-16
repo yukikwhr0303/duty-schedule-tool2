@@ -260,7 +260,8 @@ export default function ScheduleRunPanel() {
                     if (!d) return <div key={di} />;
                     const dateStr = fmtDate(d);
                     const halves = byDateHalf[dateStr] || {};
-                    const halfKeys = Object.keys(halves);
+                    const HALF_ORDER = { ALL: 0, AM: 1, PM: 2 };
+                    const halfKeys = Object.keys(halves).sort((a, b) => HALF_ORDER[a] - HALF_ORDER[b]); // 前半→後半の順に固定
                     const dow = d.getDay();
                     const isRedDay = dow === 0 || !!isHoliday(d);
                     const anyUnfilled = halfKeys.some((h) => (halves[h].duty && !halves[h].duty.member_id) || (halves[h].oncall && !halves[h].oncall.member_id));

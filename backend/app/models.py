@@ -141,8 +141,9 @@ class ScheduleRun(Base):
     status: Mapped[str] = mapped_column(String(20))  # OPTIMAL / FEASIBLE / INFEASIBLE / ERROR
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # 並び順を固定(Postgresは更新した行の返却順が変わることがあり、手動調整後に前半/後半の表示が入れ替わる原因になるため)
     assignments: Mapped[List["Assignment"]] = relationship(
-        back_populates="run", cascade="all, delete-orphan"
+        back_populates="run", cascade="all, delete-orphan", order_by="Assignment.id"
     )
 
 
