@@ -14,6 +14,30 @@ from ..auth import require_admin
 router = APIRouter(prefix="/schedule", tags=["schedule"])
 
 
+def _run_flags(db: Session, run: models.ScheduleRun):
+    """(空欄の枠があるか, 担当回数が希望回数と合っていない人がいるか) を返す。
+    回数の比較は在籍中のメンバーが対象で、担当回数一覧と同じ基準(希望回数が未設定なら0)。"""
+    has_unfilled = any(a.member_id is None for a in run.assignments)
+    counts = {}
+    for a in run.assignments:
+        if a.member_id is not None:
+            counts.setdefault(a.member_id, {"duty": 0, "oncall": 0})[a.role] += 1
+    quotas = {
+        q.member_id: q
+        for q in db.query(models.Quota).filter(
+            models.Quota.period_start == run.start_date, models.Quota.period_days == run.days
+        )
+    }
+    has_mismatch = False
+    for m in db.query(models.Member).filter(models.Member.is_active.isnot(False)).all():
+        c = counts.get(m.id, {"duty": 0, "oncall": 0})
+        q = quotas.get(m.id)
+        if c["duty"] != (q.duty_quota if q else 0) or c["oncall"] != (q.oncall_quota if q else 0):
+            has_mismatch = True
+            break
+    return has_unfilled, has_mismatch
+
+
 def _build_run_out(db: Session, run: models.ScheduleRun) -> schemas.ScheduleRunOut:
     members = {m.id: m for m in db.query(models.Member).all()}
     quota_rows = (
@@ -57,11 +81,11 @@ def _build_run_out(db: Session, run: models.ScheduleRun) -> schemas.ScheduleRunO
         for m in active_members_sorted
     ]
 
-    has_unfilled = any(a.member_id is None for a in run.assignments)
+    has_unfilled, has_mismatch = _run_flags(db, run)
 
     return schemas.ScheduleRunOut(
         id=run.id, start_date=run.start_date, days=run.days, status=run.status,
-        created_at=run.created_at, has_manual_edits=has_manual_edits, has_unfilled=has_unfilled,
+        created_at=run.created_at, has_manual_edits=has_manual_edits, has_unfilled=has_unfilled, has_mismatch=has_mismatch,
         assignments=assignments_out, tally=tally_out,
     )
 
@@ -75,14 +99,15 @@ def create_schedule_run(payload: schemas.ScheduleRunRequest, db: Session = Depen
 @router.get("/runs", response_model=List[schemas.ScheduleRunSummary])
 def list_schedule_runs(db: Session = Depends(get_db)):
     runs = db.query(models.ScheduleRun).order_by(models.ScheduleRun.created_at.desc()).all()
-    return [
-        schemas.ScheduleRunSummary(
+    result = []
+    for r in runs:
+        has_unfilled, has_mismatch = _run_flags(db, r)
+        result.append(schemas.ScheduleRunSummary(
             id=r.id, start_date=r.start_date, days=r.days, status=r.status, created_at=r.created_at,
             has_manual_edits=any(a.manual_override for a in r.assignments),
-            has_unfilled=any(a.member_id is None for a in r.assignments),
-        )
-        for r in runs
-    ]
+            has_unfilled=has_unfilled, has_mismatch=has_mismatch,
+        ))
+    return result
 
 
 @router.get("/runs/{run_id}", response_model=schemas.ScheduleRunOut)

@@ -42,6 +42,18 @@ const STATUS_LABEL = {
   ERROR: { label: "エラー(メンバー未登録など)", color: "#EE1515" },
 };
 
+// ソルバーの状態(OPTIMAL/FEASIBLE)は「解を求められたか」であって「うまく割り当てられたか」ではないため、
+// 実際に空欄の枠がある/担当回数が希望回数と合っていない場合は「失敗」として表示する。
+function getStatusInfo(r) {
+  const base = STATUS_LABEL[r.status] || { label: r.status, color: "#6B6B6B" };
+  if (r.status !== "OPTIMAL" && r.status !== "FEASIBLE") return base;
+  const reasons = [];
+  if (r.has_unfilled) reasons.push("空欄あり");
+  if (r.has_mismatch) reasons.push("回数不一致");
+  if (reasons.length === 0) return STATUS_LABEL.OPTIMAL;
+  return { label: `失敗(${reasons.join("・")})`, color: "#EE1515" };
+}
+
 // 担当回数が希望回数よりオーバー/アンダーな人を見つけやすくするための色
 const NAME_COLOR = { over: "#EE1515", under: "#0EA5E9" };
 
@@ -116,14 +128,7 @@ export default function ScheduleRunPanel() {
     for (const t of currentRun.tally) tallyByMember[t.member_id] = t;
   }
 
-  // OPTIMAL/FEASIBLE というソルバーのステータスは「解を求められたか」であって
-  // 「全枠埋まったか」ではない(制約上どうしても埋められない枠があってもOPTIMALになりうる)。
-  // 実際に空欄の割当が残っているかどうかを別途チェックして表示ラベルに反映する。
-  const hasUnfilled = currentRun ? (currentRun.has_unfilled ?? currentRun.assignments.some((a) => !a.member_id)) : false;
-  let statusInfo = currentRun ? (STATUS_LABEL[currentRun.status] || { label: currentRun.status, color: "#6B6B6B" }) : null;
-  if (currentRun && (currentRun.status === "OPTIMAL" || currentRun.status === "FEASIBLE") && hasUnfilled) {
-    statusInfo = STATUS_LABEL.FEASIBLE;
-  }
+  const statusInfo = currentRun ? getStatusInfo(currentRun) : null;
 
   return (
     <div style={{ background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E" }}>
@@ -194,10 +199,7 @@ export default function ScheduleRunPanel() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           {runs.slice(0, 5).map((r) => {
-            let info = STATUS_LABEL[r.status] || { label: r.status, color: "#6B6B6B" };
-            if ((r.status === "OPTIMAL" || r.status === "FEASIBLE") && r.has_unfilled) {
-              info = STATUS_LABEL.FEASIBLE;
-            }
+            const info = getStatusInfo(r);
             const active = currentRun?.id === r.id;
             return (
               <button

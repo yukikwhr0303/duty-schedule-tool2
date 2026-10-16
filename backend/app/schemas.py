@@ -207,6 +207,7 @@ class ScheduleRunOut(BaseModel):
     created_at: UtcDateTime
     has_manual_edits: bool
     has_unfilled: bool = False
+    has_mismatch: bool = False
     assignments: List[AssignmentOut]
     tally: List[TallyItem]
 
@@ -219,6 +220,7 @@ class ScheduleRunSummary(BaseModel):
     created_at: UtcDateTime
     has_manual_edits: bool
     has_unfilled: bool = False
+    has_mismatch: bool = False
 
 
 # ---------- Manual adjustment ----------
