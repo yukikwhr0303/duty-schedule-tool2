@@ -1,17 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { listMembers, getSubmissions } from "./api";
 import { getDeadlineStatus, formatDeadlineLabel } from "./deadline";
-import { daysInMonth, isoDate } from "./holidays";
-
-// 「翌月」= 今まさに募集・入力してもらっている対象月、として扱う。
-// (募集期間は対象月の前月の第1月曜〜金曜正午なので、通常は「今日から見て翌月」が入力対象月になる)
-function getTargetMonth(now) {
-  let y = now.getFullYear();
-  let m0 = now.getMonth() + 1; // 0-indexed, 翌月
-  if (m0 > 11) { m0 = 0; y += 1; }
-  return { year: y, month0: m0 };
-}
+import { periodRange, periodTitle, defaultTargetPeriod, shiftPeriod, deadlineBasis } from "./periods";
 
 export default function MissingSubmissions() {
   const [members, setMembers] = useState([]);
@@ -19,11 +10,11 @@ export default function MissingSubmissions() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const { year: targetYear, month0: targetMonth0 } = getTargetMonth(new Date());
-  const monthLabel = `${targetYear}/${String(targetMonth0 + 1).padStart(2, "0")}`;
-  const periodStart = isoDate(targetYear, targetMonth0 + 1, 1);
-  const periodDays = daysInMonth(targetYear, targetMonth0 + 1);
-  const deadlineStatus = getDeadlineStatus(new Date(), targetYear, targetMonth0);
+  const [period, setPeriod] = useState(() => defaultTargetPeriod(new Date()));
+  const monthLabel = periodTitle(period);
+  const { start: periodStart, days: periodDays } = periodRange(period);
+  const basis = deadlineBasis(period);
+  const deadlineStatus = getDeadlineStatus(new Date(), basis.year, basis.month0);
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -58,6 +49,10 @@ export default function MissingSubmissions() {
           <button onClick={reload} title="再読み込み" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", display: "flex" }}>
             <RefreshCw size={14} color="#8A8A8A" />
           </button>
+        </div>
+        <div style={{ display: "flex", gap: "6px", marginBottom: "8px" }}>
+          <button onClick={() => setPeriod((p) => shiftPeriod(p, -1))} style={{ background: "#FFFFFF", border: "2px solid #1E1E1E", borderRadius: "3px", width: "28px", height: "26px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronLeft size={14} /></button>
+          <button onClick={() => setPeriod((p) => shiftPeriod(p, 1))} style={{ background: "#FFFFFF", border: "2px solid #1E1E1E", borderRadius: "3px", width: "28px", height: "26px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronRight size={14} /></button>
         </div>
         <div style={{ fontSize: "11.5px", color: "#8A8A8A", marginBottom: "12px" }}>
           締切: {formatDeadlineLabel(deadlineStatus.deadline)}

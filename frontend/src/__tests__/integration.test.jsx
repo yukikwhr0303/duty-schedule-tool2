@@ -12,6 +12,10 @@ import MemberAvailabilityViewer from "../MemberAvailabilityViewer";
 import MissingSubmissions from "../MissingSubmissions";
 import SubmissionLog from "../SubmissionLog";
 import { formatJst } from "../deadline";
+import { periodRange, periodContaining, defaultTargetPeriod, shiftPeriod, periodsOfYear, periodLabel, monthPeriod, nyPeriod, deadlineBasis } from "../periods";
+
+// テスト用: ISO日付にn日足す
+const addIso = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 import { setAdminPassword, clearAdminPassword, clearMemberSession } from "../api";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -350,7 +354,7 @@ describe("実バックエンドとの結合テスト", () => {
     ).toBeInTheDocument();
   });
 
-  it("希望入力カレンダー画面: 「この月をすべて不可にする」でまとめて不可にでき、「全部可に戻す」で元に戻せる", async () => {
+  it("希望入力カレンダー画面: 「この期間をすべて不可にする」でまとめて不可にでき、「全部可に戻す」で元に戻せる", async () => {
     const user = userEvent.setup();
 
     const createRes = await fetch(`${API_BASE}/members`, {
@@ -366,13 +370,10 @@ describe("実バックエンドとの結合テスト", () => {
     const originalConfirm = window.confirm;
     window.confirm = () => true;
 
-    await user.click(screen.getByRole("button", { name: "この月をすべて不可にする" }));
+    await user.click(screen.getByRole("button", { name: "この期間をすべて不可にする" }));
 
     await waitFor(async () => {
-      const now = new Date();
-      const y = now.getFullYear(), m = now.getMonth() + 1;
-      const start = `${y}-${String(m).padStart(2, "0")}-01`;
-      const end = `${y}-${String(m).padStart(2, "0")}-28`;
+      const { start, end } = periodRange(periodContaining(new Date()));
       const r = await fetch(`${API_BASE}/availability?member_id=${bulkMember.id}&start=${start}&end=${end}`);
       const rows = await r.json();
       expect(rows.length).toBeGreaterThan(0);
@@ -382,10 +383,7 @@ describe("実バックエンドとの結合テスト", () => {
     await user.click(screen.getByRole("button", { name: "全部可に戻す" }));
 
     await waitFor(async () => {
-      const now = new Date();
-      const y = now.getFullYear(), m = now.getMonth() + 1;
-      const start = `${y}-${String(m).padStart(2, "0")}-01`;
-      const end = `${y}-${String(m).padStart(2, "0")}-28`;
+      const { start, end } = periodRange(periodContaining(new Date()));
       const r = await fetch(`${API_BASE}/availability?member_id=${bulkMember.id}&start=${start}&end=${end}`);
       const rows = await r.json();
       expect(rows.length).toBe(0);
@@ -546,7 +544,7 @@ describe("実バックエンドとの結合テスト", () => {
     const comboboxes = screen.getAllByRole("combobox");
     await user.selectOptions(comboboxes[0], "2026");
     await user.selectOptions(comboboxes[1], "12");
-    await waitFor(() => expect(screen.getByText(/12\/1.*〜.*12\/31.*31日間/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/12\/1.*〜.*12\/28.*28日間/)).toBeInTheDocument());
 
     const memberRow = screen.getByText("合計表示テスト六郎").closest("div").parentElement;
     const steppers = within(memberRow).getAllByRole("spinbutton");
@@ -596,10 +594,7 @@ describe("実バックエンドとの結合テスト", () => {
     await waitFor(() => expect(screen.getByText(/提出済み/)).toBeInTheDocument());
 
     await waitFor(async () => {
-      const now = new Date();
-      const y = now.getFullYear(), m0 = now.getMonth();
-      const start = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
-      const days = new Date(y, m0 + 1, 0).getDate();
+      const { start, days } = periodRange(periodContaining(new Date()));
       const r = await fetch(`${API_BASE}/availability/submissions?period_start=${start}&period_days=${days}`);
       const subs = await r.json();
       expect(subs.some((s) => s.member_id === cm.id)).toBe(true);
@@ -658,11 +653,8 @@ describe("実バックエンドとの結合テスト", () => {
     const hm = await createRes.json();
 
     const now = new Date();
-    let ty = now.getFullYear(), tm0 = now.getMonth() + 1;
-    if (tm0 > 11) { tm0 = 0; ty += 1; }
-    const start = `${ty}-${String(tm0 + 1).padStart(2, "0")}-01`;
-    const nDays = new Date(ty, tm0 + 1, 0).getDate();
-    const day5 = `${ty}-${String(tm0 + 1).padStart(2, "0")}-05`;
+    const { start, days: nDays } = periodRange(defaultTargetPeriod(now));
+    const day5 = addIso(start, 4);
 
     render(<SubmissionLog />);
     await waitFor(() => expect(screen.getByText("履歴確認テスト十郎")).toBeInTheDocument());
@@ -693,14 +685,12 @@ describe("実バックエンドとの結合テスト", () => {
     const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
     const vm = await (await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "リセット確認テスト十一郎", rank: "B" }) })).json();
     const now = new Date();
-    const y = now.getFullYear(), m0 = now.getMonth();
-    const mm = String(m0 + 1).padStart(2, "0");
-    const nDays = new Date(y, m0 + 1, 0).getDate();
-    const day3 = `${y}-${mm}-03`;
+    const { start: pStart, days: nDays } = periodRange(defaultTargetPeriod(now));
+    const day3 = addIso(pStart, 2);
     const dayRow = (d) => ({ date: d, half: "ALL", duty_ng: true, oncall_ng: false });
     // 本人: 3日を不可にして提出 → 管理者が3日を可に戻す(代理編集)
     await fetch(`${API_BASE}/availability/${vm.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start: day3, end: day3, entries: [dayRow(day3)] }) });
-    await fetch(`${API_BASE}/availability/${vm.id}/submit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ period_start: `${y}-${mm}-01`, period_days: nDays }) });
+    await fetch(`${API_BASE}/availability/${vm.id}/submit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ period_start: pStart, period_days: nDays }) });
     await fetch(`${API_BASE}/availability/${vm.id}`, { method: "PUT", headers: adminHeaders, body: JSON.stringify({ start: day3, end: day3, entries: [] }) });
 
     render(<MemberAvailabilityViewer />);
@@ -717,5 +707,65 @@ describe("実バックエンドとの結合テスト", () => {
       expect(rows.length).toBe(1);
       expect(rows[0].duty_ng).toBe(true);
     });
+  });
+
+  it("期間の分割: 12月は12/1〜12/28、年末年始は12/29〜翌1/3、1月は1/4〜に分かれ、順番に前後へ移動できる", () => {
+    expect(periodRange(monthPeriod(2026, 12))).toEqual({ start: "2026-12-01", end: "2026-12-28", days: 28 });
+    expect(periodRange(nyPeriod(2026))).toEqual({ start: "2026-12-29", end: "2027-01-03", days: 6 });
+    expect(periodRange(monthPeriod(2027, 1))).toEqual({ start: "2027-01-04", end: "2027-01-31", days: 28 });
+    expect(periodRange(monthPeriod(2026, 11))).toEqual({ start: "2026-11-01", end: "2026-11-30", days: 30 });
+    // 12月 → 年末年始 → 1月 → 2月 / 逆方向も同じ並び
+    expect(shiftPeriod(monthPeriod(2026, 12), 1)).toEqual(nyPeriod(2026));
+    expect(shiftPeriod(nyPeriod(2026), 1)).toEqual(monthPeriod(2027, 1));
+    expect(shiftPeriod(monthPeriod(2027, 1), -1)).toEqual(nyPeriod(2026));
+    expect(shiftPeriod(nyPeriod(2026), -1)).toEqual(monthPeriod(2026, 12));
+    // 日付がどの期間に入るか(1/1〜1/3は前年の年末年始)
+    expect(periodContaining(new Date(2027, 0, 2))).toEqual(nyPeriod(2026));
+    expect(periodContaining(new Date(2026, 11, 29))).toEqual(nyPeriod(2026));
+    expect(periodContaining(new Date(2026, 11, 28))).toEqual(monthPeriod(2026, 12));
+    expect(periodContaining(new Date(2027, 0, 4))).toEqual(monthPeriod(2027, 1));
+    // 締切の基準: 年末年始は12月分と同じ、1月は通常の1月
+    expect(deadlineBasis(nyPeriod(2026))).toEqual({ year: 2026, month0: 11 });
+    expect(deadlineBasis(monthPeriod(2027, 1))).toEqual({ year: 2027, month0: 0 });
+    // 12月の募集時期(11月)は12月、12月の間は1月(1/4〜)が既定の対象
+    expect(defaultTargetPeriod(new Date(2026, 10, 3))).toEqual(monthPeriod(2026, 12));
+    expect(defaultTargetPeriod(new Date(2026, 11, 3))).toEqual(monthPeriod(2027, 1));
+    expect(periodsOfYear(2026).map((p) => periodLabel(p, true))).toContain("年末年始(12/29〜1/3)");
+  });
+
+  it("希望回数設定画面: 対象期間に「12月」「年末年始」「1月」が分かれて選べ、年末年始は12/29〜1/3の6日間になる", async () => {
+    const user = userEvent.setup();
+    render(<QuotaSetting />);
+    const comboboxes = await screen.findAllByRole("combobox");
+    await user.selectOptions(comboboxes[0], "2026");
+    expect(within(comboboxes[1]).getByRole("option", { name: "12月(12/1〜12/28)" })).toBeInTheDocument();
+    expect(within(comboboxes[1]).getByRole("option", { name: "年末年始(12/29〜1/3)" })).toBeInTheDocument();
+    expect(within(comboboxes[1]).getByRole("option", { name: "1月(1/4〜1/31)" })).toBeInTheDocument();
+    await user.selectOptions(comboboxes[1], "ny");
+    await waitFor(() => expect(screen.getByText(/12\/29.*〜.*1\/3.*6日間/)).toBeInTheDocument());
+  });
+
+  it("年末年始の希望入力: 期間を年末年始に切り替えると12/29〜1/3だけが出て、不可を保存でき、年をまたいだ提出ができる", async () => {
+    const user = userEvent.setup();
+    const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
+    const nm = await (await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "年末年始テスト十二郎", rank: "A" }) })).json();
+    render(<DutyCalendar member={nm} />);
+    // 今日の期間から、年末年始(2026年)が出るまで「次へ」で進める
+    const nextBtns = () => screen.getAllByRole("button").filter((b) => b.querySelector("svg.lucide-chevron-right"));
+    for (let i = 0; i < 40 && !screen.queryByText("2026/年末年始"); i++) {
+      await user.click(nextBtns()[0]);
+    }
+    await waitFor(() => expect(screen.getByText("2026/年末年始")).toBeInTheDocument());
+    // 12/29〜1/3の6日分(日付セルは数字だけのボタン)
+    const dayButtons = screen.getAllByRole("button").filter((b) => /^\d+(祝)?$/.test((b.textContent || "").trim()));
+    expect(dayButtons.map((b) => b.textContent.trim().replace("祝", ""))).toEqual(["29", "30", "31", "1", "2", "3"]);
+
+    await user.click(screen.getByRole("button", { name: "この内容で提出する" }));
+    await waitFor(() => expect(screen.getByText(/提出済み/)).toBeInTheDocument());
+    const subs = await (await fetch(`${API_BASE}/availability/submissions?period_start=2026-12-29&period_days=6`)).json();
+    expect(subs.some((s) => s.member_id === nm.id)).toBe(true);
+    // 12月(12/1〜12/28)側には提出が入っていない
+    const subsDec = await (await fetch(`${API_BASE}/availability/submissions?period_start=2026-12-01&period_days=28`)).json();
+    expect(subsDec.some((s) => s.member_id === nm.id)).toBe(false);
   });
 });

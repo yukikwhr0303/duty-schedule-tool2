@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Moon, Phone, Pencil, Eye, Loader2, Sunrise, Sunset } from "lucide-react";
 import { listMembers, getAvailability, replaceAvailability, getAvailabilityLogs, restoreSubmittedAvailability } from "./api";
 import { formatJst } from "./deadline";
-import { isHoliday, isWeekendOrHoliday, daysInMonth, isoDate } from "./holidays";
+import { isHoliday, isWeekendOrHoliday, isoDate } from "./holidays";
+import { periodRange, periodDates, periodTitle, shiftPeriod, defaultTargetPeriod } from "./periods";
 
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -45,8 +46,8 @@ export default function MemberAvailabilityViewer() {
   const today = new Date();
   const [members, setMembers] = useState([]);
   const [memberId, setMemberId] = useState(null);
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
+  // 表示中の期間(12月・年末年始・1月は分かれている)。初期表示は今まさに募集中の期間。
+  const [period, setPeriod] = useState(() => defaultTargetPeriod(new Date()));
   const [entries, setEntries] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -71,42 +72,38 @@ export default function MemberAvailabilityViewer() {
   const selectedMember = members.find((m) => m.id === memberId);
   const isInactive = selectedMember?.is_active === false;
 
-  const nDays = daysInMonth(year, month + 1);
-  const startWd = new Date(year, month, 1).getDay();
+  const range = periodRange(period);
+  const nDays = range.days;
+  const dates = useMemo(() => periodDates(period), [period]);
   const cells = useMemo(() => {
     const arr = [];
-    for (let i = 0; i < startWd; i++) arr.push(null);
-    for (let d = 1; d <= nDays; d++) arr.push(d);
+    for (let i = 0; i < dates[0].getDay(); i++) arr.push(null);
+    dates.forEach((d) => arr.push(d));
     return arr;
-  }, [startWd, nDays]);
+  }, [dates]);
 
   const loadMonth = useCallback(() => {
     if (!memberId) return;
     setLoading(true);
     setError(null);
-    const start = isoDate(year, month + 1, 1);
-    const end = isoDate(year, month + 1, nDays);
-    getAvailability(memberId, start, end)
+    getAvailability(memberId, range.start, range.end)
       .then((rows) => setEntries(rowsToEntries(rows)))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [memberId, year, month, nDays]);
+  }, [memberId, range.start, range.end]);
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
 
   // 選択中メンバー・月の変更履歴(本人の保存/提出・管理者の代理編集。変更前の内容もここで確認できる)
   useEffect(() => {
     if (!memberId) return;
-    getAvailabilityLogs(isoDate(year, month + 1, 1), nDays, memberId)
+    getAvailabilityLogs(range.start, nDays, memberId)
       .then((ls) => setSubmits(ls.filter((l) => l.action === "submit").reverse()))
       .catch(() => setSubmits([]));
-  }, [memberId, year, month, nDays, historyTick]);
+  }, [memberId, range.start, nDays, historyTick]);
 
   const changeMonth = (delta) => {
-    let m = month + delta, y = year;
-    if (m < 0) { m = 11; y -= 1; }
-    if (m > 11) { m = 0; y += 1; }
-    setMonth(m); setYear(y);
+    setPeriod((p) => shiftPeriod(p, delta));
     setViewId(null);
   };
 
@@ -122,15 +119,15 @@ export default function MemberAvailabilityViewer() {
     setEditMode(true);
   };
 
-  const openDay = (day) => {
-    if (!day) return;
-    const wknd = isWeekendOrHoliday(new Date(year, month, day));
-    const k = isoDate(year, month + 1, day);
+  const openDay = (dt) => {
+    if (!dt) return;
+    const wknd = isWeekendOrHoliday(dt);
+    const k = isoDate(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
     const existing = shownEntries[k];
     const def = isInactive ? "ng" : "ok";
     if (wknd) setDraft(existing || { type: "weekend", amDuty: def, pmDuty: def, amCall: def, pmCall: def, note: "" });
     else setDraft(existing || { type: "weekday", duty: def, call: def, note: "" });
-    setActiveDay(day);
+    setActiveDay(dt);
   };
 
   const hasAnyNg = (d) =>
@@ -158,11 +155,11 @@ export default function MemberAvailabilityViewer() {
   };
 
   const saveDraft = () => {
-    const k = isoDate(year, month + 1, activeDay);
+    const k = isoDate(activeDay.getFullYear(), activeDay.getMonth() + 1, activeDay.getDate());
     persistDay(k, hasAnyNg(draft) ? draft : null);
   };
   const clearDraft = () => {
-    const k = isoDate(year, month + 1, activeDay);
+    const k = isoDate(activeDay.getFullYear(), activeDay.getMonth() + 1, activeDay.getDate());
     persistDay(k, null);
   };
 
@@ -174,11 +171,11 @@ export default function MemberAvailabilityViewer() {
 
   const restoreSubmitted = async () => {
     const m = members.find((x) => x.id === memberId);
-    if (!window.confirm(`${m ? m.name : "本人"}さんの${year}/${month + 1}月の希望を、本人が最後に提出した時点の内容に戻します(代理編集の内容は消えます)。よろしいですか？`)) return;
+    if (!window.confirm(`${m ? m.name : "本人"}さんの${periodTitle(period)}の希望を、本人が最後に提出した時点の内容に戻します(代理編集の内容は消えます)。よろしいですか？`)) return;
     setRestoring(true);
     setError(null);
     try {
-      await restoreSubmittedAvailability(memberId, isoDate(year, month + 1, 1), nDays);
+      await restoreSubmittedAvailability(memberId, range.start, nDays);
       loadMonth();
       setViewId(null);
       setHistoryTick((t) => t + 1);
@@ -189,7 +186,7 @@ export default function MemberAvailabilityViewer() {
     }
   };
 
-  const monthName = `${year}/${String(month + 1).padStart(2, "0")}`;
+  const monthName = periodTitle(period);
 
   return (
     <div style={{ background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E" }}>
@@ -309,12 +306,12 @@ export default function MemberAvailabilityViewer() {
           ))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: "5px" }}>
-          {cells.map((day, idx) => {
-            if (!day) return <div key={idx} />;
-            const dt = new Date(year, month, day);
+          {cells.map((dt, idx) => {
+            if (!dt) return <div key={idx} />;
+            const day = dt.getDate();
             const dow = dt.getDay();
             const hName = isHoliday(dt);
-            const k = isoDate(year, month + 1, day);
+            const k = isoDate(dt.getFullYear(), dt.getMonth() + 1, day);
             const e = shownEntries[k];
             const allNg = e
               ? (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng")
@@ -328,7 +325,7 @@ export default function MemberAvailabilityViewer() {
             return (
               <button
                 key={idx}
-                onClick={() => openDay(day)}
+                onClick={() => openDay(dt)}
                 style={{
                   position: "relative", aspectRatio: "1", background: bg, border: `1.5px solid ${border}`,
                   borderRadius: "2px", color: textColor, display: "flex", flexDirection: "column",
@@ -350,7 +347,7 @@ export default function MemberAvailabilityViewer() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(30,30,30,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }} onClick={() => { if (!savingDay) { setActiveDay(null); setDraft(null); } }}>
           <div className="poke-window" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: "420px", padding: "20px 18px 24px", borderRadius: "6px 6px 0 0" }}>
             <div style={{ fontSize: "16px", fontWeight: 700, marginBottom: "4px" }}>
-              {month + 1}月{activeDay}日（{WEEKDAY_LABELS[new Date(year, month, activeDay).getDay()]}）
+              {activeDay.getMonth() + 1}月{activeDay.getDate()}日（{WEEKDAY_LABELS[activeDay.getDay()]}）
             </div>
             <div style={{ fontSize: "13px", color: "#6B6B6B", marginBottom: "16px" }}>
               {canEdit ? "不可にする枠を選んでください" : "内容を確認できます（閲覧のみ）"}

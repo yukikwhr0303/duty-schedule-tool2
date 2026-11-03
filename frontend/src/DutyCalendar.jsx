@@ -2,39 +2,13 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Moon, Phone, Sunrise, Sunset, RefreshCw, Loader2, MessageSquare, CheckCircle2 } from "lucide-react";
 import { getAvailability, replaceAvailability, submitAvailability, getSubmissions } from "./api";
 import { getDeadlineStatus, formatDeadlineLabel, formatJst } from "./deadline";
+import { isHoliday, isWeekendOrHoliday, isoDate } from "./holidays";
+import { periodRange, periodDates, periodTitle, shiftPeriod, periodContaining, deadlineBasis } from "./periods";
 
 // ---- retro handheld-RPG tokens (v4: black/white, rounded box) ----
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 
 function pad2(n) { return String(n).padStart(2, "0"); }
-function daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
-function firstWeekday(year, month) { return new Date(year, month, 1).getDay(); }
-function isoKey(year, month, day) { return `${year}-${pad2(month + 1)}-${pad2(day)}`; }
-function isWeekend(year, month, day) { const d = new Date(year, month, day).getDay(); return d === 0 || d === 6 || !!holidayName(year, month, day); }
-
-// 祝日データ(2025〜2027年)。国民の祝日に関する法律に基づく内閣府公表の日付。
-const HOLIDAYS = {
-  "2025-1-1": "元日", "2025-1-13": "成人の日", "2025-2-11": "建国記念の日",
-  "2025-2-23": "天皇誕生日", "2025-2-24": "振替休日", "2025-3-20": "春分の日",
-  "2025-4-29": "昭和の日", "2025-5-3": "憲法記念日", "2025-5-4": "みどりの日",
-  "2025-5-5": "こどもの日", "2025-5-6": "振替休日", "2025-7-21": "海の日",
-  "2025-8-11": "山の日", "2025-9-15": "敬老の日", "2025-9-23": "秋分の日",
-  "2025-10-13": "スポーツの日", "2025-11-3": "文化の日", "2025-11-23": "勤労感謝の日",
-  "2025-11-24": "振替休日",
-  "2026-1-1": "元日", "2026-1-12": "成人の日", "2026-2-11": "建国記念の日",
-  "2026-2-23": "天皇誕生日", "2026-3-20": "春分の日", "2026-4-29": "昭和の日",
-  "2026-5-3": "憲法記念日", "2026-5-4": "みどりの日", "2026-5-5": "こどもの日",
-  "2026-5-6": "振替休日", "2026-7-20": "海の日", "2026-8-11": "山の日",
-  "2026-9-21": "敬老の日", "2026-9-22": "国民の休日", "2026-9-23": "秋分の日",
-  "2026-10-12": "スポーツの日", "2026-11-3": "文化の日", "2026-11-23": "勤労感謝の日",
-  "2027-1-1": "元日", "2027-1-11": "成人の日", "2027-2-11": "建国記念の日",
-  "2027-2-23": "天皇誕生日", "2027-3-21": "春分の日", "2027-3-22": "振替休日",
-  "2027-4-29": "昭和の日", "2027-5-3": "憲法記念日", "2027-5-4": "みどりの日",
-  "2027-5-5": "こどもの日", "2027-7-19": "海の日", "2027-8-11": "山の日",
-  "2027-9-20": "敬老の日", "2027-9-23": "秋分の日", "2027-10-11": "スポーツの日",
-  "2027-11-3": "文化の日", "2027-11-23": "勤労感謝の日",
-};
-function holidayName(year, month, day) { return HOLIDAYS[`${year}-${month + 1}-${day}`] || null; }
 
 // API から取得した「不可」行のリスト([{date, half, duty_ng, oncall_ng}]) を
 // カレンダーUIのentries辞書({ "YYYY-MM-DD": {type, ...} }) に変換する
@@ -83,8 +57,8 @@ function entryToRecords(dateStr, e) {
 export default function DutyCalendar({ member }) {
   const today = new Date();
   const memberId = member.id;
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
+  // 表示中の期間(12月・年末年始・1月は分かれている)。初期表示は今日を含む期間。
+  const [period, setPeriod] = useState(() => periodContaining(new Date()));
   const [entries, setEntries] = useState({});
   const [activeDay, setActiveDay] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -95,26 +69,25 @@ export default function DutyCalendar({ member }) {
   const [submission, setSubmission] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const nDays = daysInMonth(year, month);
-  const startWd = firstWeekday(year, month);
+  const range = periodRange(period);
+  const nDays = range.days;
+  const dates = useMemo(() => periodDates(period), [period]);
   const cells = useMemo(() => {
     const arr = [];
-    for (let i = 0; i < startWd; i++) arr.push(null);
-    for (let d = 1; d <= nDays; d++) arr.push(d);
+    for (let i = 0; i < dates[0].getDay(); i++) arr.push(null);
+    dates.forEach((d) => arr.push(d));
     return arr;
-  }, [year, month, startWd, nDays]);
+  }, [dates]);
 
   const loadMonth = useCallback(() => {
     if (!memberId) return;
     setLoading(true);
     setError(null);
-    const start = isoKey(year, month, 1);
-    const end = isoKey(year, month, nDays);
-    getAvailability(memberId, start, end)
+    getAvailability(memberId, range.start, range.end)
       .then((rows) => setEntries(rowsToEntries(rows)))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [memberId, year, month, nDays]);
+  }, [memberId, range.start, range.end]);
 
   useEffect(() => {
     loadMonth();
@@ -122,11 +95,11 @@ export default function DutyCalendar({ member }) {
 
   const loadSubmission = useCallback(() => {
     if (!memberId) return;
-    const start = isoKey(year, month, 1);
-    getSubmissions(start, nDays)
+    setSubmission(null);
+    getSubmissions(range.start, nDays)
       .then((rows) => setSubmission(rows.find((r) => r.member_id === memberId) || null))
       .catch(() => {});
-  }, [memberId, year, month, nDays]);
+  }, [memberId, range.start, nDays]);
 
   useEffect(() => {
     loadSubmission();
@@ -137,8 +110,7 @@ export default function DutyCalendar({ member }) {
     setSubmitting(true);
     setError(null);
     try {
-      const start = isoKey(year, month, 1);
-      const result = await submitAvailability(memberId, start, nDays);
+      const result = await submitAvailability(memberId, range.start, nDays);
       setSubmission(result);
     } catch (e) {
       setError(e.message);
@@ -148,20 +120,20 @@ export default function DutyCalendar({ member }) {
   };
 
   const changeMonth = (delta) => {
-    let m = month + delta, y = year;
-    if (m < 0) { m = 11; y -= 1; }
-    if (m > 11) { m = 0; y += 1; }
-    setMonth(m); setYear(y);
+    setPeriod((p) => shiftPeriod(p, delta));
+    setActiveDay(null);
+    setDraft(null);
   };
 
-  const openDay = (day) => {
-    if (!day) return;
-    const wknd = isWeekend(year, month, day);
-    const k = isoKey(year, month, day);
+  // activeDay は選択中の日付(Date)
+  const openDay = (dt) => {
+    if (!dt) return;
+    const wknd = isWeekendOrHoliday(dt);
+    const k = isoDate(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
     const existing = entries[k];
     if (wknd) setDraft(existing || { type: "weekend", amDuty: "ok", pmDuty: "ok", amCall: "ok", pmCall: "ok", note: "" });
     else setDraft(existing || { type: "weekday", duty: "ok", call: "ok", note: "" });
-    setActiveDay(day);
+    setActiveDay(dt);
   };
 
   const hasAnyNg = (d) =>
@@ -192,18 +164,18 @@ export default function DutyCalendar({ member }) {
   };
 
   const saveDraft = () => {
-    const k = isoKey(year, month, activeDay);
+    const k = isoDate(activeDay.getFullYear(), activeDay.getMonth() + 1, activeDay.getDate());
     persistDay(k, hasContent(draft) ? draft : null);
   };
 
   const clearDraft = () => {
-    const k = isoKey(year, month, activeDay);
+    const k = isoDate(activeDay.getFullYear(), activeDay.getMonth() + 1, activeDay.getDate());
     persistDay(k, null);
   };
 
   const applyBulk = async (makeUnavailable) => {
     if (bulkBusy) return;
-    const monthLabel = `${year}/${String(month + 1).padStart(2, "0")}`;
+    const monthLabel = periodTitle(period);
     const confirmMsg = makeUnavailable
       ? `${monthLabel}の当直・オンコールをすべて「不可」にします。よろしいですか？`
       : `${monthLabel}をすべて「可」に戻します。よろしいですか？`;
@@ -212,14 +184,14 @@ export default function DutyCalendar({ member }) {
     setBulkBusy(true);
     setError(null);
     try {
-      const start = isoKey(year, month, 1);
-      const end = isoKey(year, month, nDays);
+      const start = range.start;
+      const end = range.end;
       const records = [];
       const nextEntries = {};
       if (makeUnavailable) {
-        for (let d = 1; d <= nDays; d++) {
-          const dateStr = isoKey(year, month, d);
-          if (isWeekend(year, month, d)) {
+        for (const dt of dates) {
+          const dateStr = isoDate(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+          if (isWeekendOrHoliday(dt)) {
             records.push({ date: dateStr, half: "AM", duty_ng: true, oncall_ng: true });
             records.push({ date: dateStr, half: "PM", duty_ng: true, oncall_ng: true });
             nextEntries[dateStr] = { type: "weekend", amDuty: "ng", pmDuty: "ng", amCall: "ng", pmCall: "ng", note: "" };
@@ -238,8 +210,9 @@ export default function DutyCalendar({ member }) {
     }
   };
 
-  const monthName = `${year}/${String(month + 1).padStart(2, "0")}`;
-  const deadlineStatus = getDeadlineStatus(new Date(), year, month);
+  const monthName = periodTitle(period);
+  const basis = deadlineBasis(period);
+  const deadlineStatus = getDeadlineStatus(new Date(), basis.year, basis.month0);
 
   return (
     <div style={{ minHeight: "100vh", maxWidth: "480px", margin: "0 auto", background: "#FFFFFF", fontFamily: "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic',Meiryo,sans-serif", color: "#1E1E1E", paddingBottom: "100px" }}>
@@ -313,7 +286,7 @@ export default function DutyCalendar({ member }) {
             disabled={bulkBusy}
             style={{ flex: 1.4, padding: "9px", border: "2px solid #1E1E1E", borderRadius: "3px", background: "#EE1515", color: "#FFFFFF", fontSize: "11.5px", fontWeight: 700, cursor: bulkBusy ? "default" : "pointer", opacity: bulkBusy ? 0.6 : 1 }}
           >
-            この月をすべて不可にする
+            この期間をすべて不可にする
           </button>
         </div>
       </div>
@@ -338,16 +311,16 @@ export default function DutyCalendar({ member }) {
           ))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: "5px" }}>
-          {cells.map((day, idx) => {
-            if (!day) return <div key={idx} />;
-            const dow = new Date(year, month, day).getDay();
-            const hName = holidayName(year, month, day);
-            const wknd = isWeekend(year, month, day);
-            const k = isoKey(year, month, day);
+          {cells.map((dt, idx) => {
+            if (!dt) return <div key={idx} />;
+            const day = dt.getDate();
+            const dow = dt.getDay();
+            const hName = isHoliday(dt);
+            const k = isoDate(dt.getFullYear(), dt.getMonth() + 1, day);
             const e = entries[k];
             const allNg = e && (e.type === "weekday" ? e.duty === "ng" && e.call === "ng" : e.amDuty === "ng" && e.pmDuty === "ng" && e.amCall === "ng" && e.pmCall === "ng");
             const restricted = e && (e.type === "weekday" ? (e.duty === "ng" || e.call === "ng") : (e.amDuty === "ng" || e.pmDuty === "ng" || e.amCall === "ng" || e.pmCall === "ng"));
-            const isToday = year === today.getFullYear() && month === today.getMonth() && day === today.getDate();
+            const isToday = dt.getFullYear() === today.getFullYear() && dt.getMonth() === today.getMonth() && day === today.getDate();
             const isRedDay = dow === 0 || !!hName;
             const dowTint = isRedDay ? "#FBE9E9" : dow === 6 ? "#E8EBF3" : "#FFFFFF";
             const dowBorder = isRedDay ? "#EE1515" : dow === 6 ? "#223A70" : "#1E1E1E";
@@ -357,7 +330,7 @@ export default function DutyCalendar({ member }) {
             return (
               <button
                 key={idx}
-                onClick={() => openDay(day)}
+                onClick={() => openDay(dt)}
                 style={{
                   position: "relative", aspectRatio: "1",
                   background: bg,
@@ -418,10 +391,10 @@ export default function DutyCalendar({ member }) {
         <div style={{ position: "fixed", inset: 0, background: "rgba(30,30,30,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }} onClick={() => { if (!savingDay) { setActiveDay(null); setDraft(null); } }}>
           <div className="poke-window" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: "480px", padding: "20px 18px 24px", borderRadius: "6px 6px 0 0" }}>
             <div style={{ fontSize: "16px", fontWeight: 700, color: "#1E1E1E", marginBottom: "4px" }}>
-              {month + 1}月{activeDay}日（{WEEKDAY_LABELS[new Date(year, month, activeDay).getDay()]}）
-              {holidayName(year, month, activeDay) && (
+              {activeDay.getMonth() + 1}月{activeDay.getDate()}日（{WEEKDAY_LABELS[activeDay.getDay()]}）
+              {isHoliday(activeDay) && (
                 <span style={{ fontSize: "12px", color: "#EE1515", marginLeft: "8px" }}>
-                  {holidayName(year, month, activeDay)}
+                  {isHoliday(activeDay)}
                 </span>
               )}
             </div>

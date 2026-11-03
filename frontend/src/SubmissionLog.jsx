@@ -2,31 +2,22 @@ import React, { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { listMembers, getAvailabilityLogs } from "./api";
 import { getRecruitmentWindow, formatJst } from "./deadline";
-import { daysInMonth, isoDate } from "./holidays";
+import { periodRange, periodTitle, defaultTargetPeriod, shiftPeriod, deadlineBasis } from "./periods";
 import AvailabilityHistory from "./AvailabilityHistory";
-
-// 対象月(=今募集中の月)の既定値は「翌月」
-function defaultTarget() {
-  const now = new Date();
-  let y = now.getFullYear();
-  let m0 = now.getMonth() + 1;
-  if (m0 > 11) { m0 = 0; y += 1; }
-  return { year: y, month0: m0 };
-}
 
 // 提出状況と履歴を一覧で確認する管理者向けパネル。
 // 「誰が締切に遅れたか」「誰が一番遅いか」「提出だけして中身が空ではないか」「提出後に内容を変えていないか」を見る。
 export default function SubmissionLog() {
-  const [{ year, month0 }, setTarget] = useState(defaultTarget);
+  const [period, setPeriod] = useState(() => defaultTargetPeriod(new Date()));
   const [members, setMembers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [openId, setOpenId] = useState(null);
 
-  const periodStart = isoDate(year, month0 + 1, 1);
-  const periodDays = daysInMonth(year, month0 + 1);
-  const { deadline } = getRecruitmentWindow(year, month0);
+  const { start: periodStart, days: periodDays } = periodRange(period);
+  const basis = deadlineBasis(period);
+  const { deadline } = getRecruitmentWindow(basis.year, basis.month0);
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -43,10 +34,7 @@ export default function SubmissionLog() {
   useEffect(() => { reload(); }, [reload]);
 
   const changeMonth = (delta) => {
-    let m = month0 + delta, y = year;
-    if (m < 0) { m = 11; y -= 1; }
-    if (m > 11) { m = 0; y += 1; }
-    setTarget({ year: y, month0: m });
+    setPeriod((p) => shiftPeriod(p, delta));
     setOpenId(null);
   };
 
@@ -84,7 +72,7 @@ export default function SubmissionLog() {
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "6px 0" }}>
           <button onClick={() => changeMonth(-1)} style={navBtn}><ChevronLeft size={14} /></button>
-          <div style={{ fontWeight: 700, fontSize: "16px" }}>{year}/{String(month0 + 1).padStart(2, "0")}分</div>
+          <div style={{ fontWeight: 700, fontSize: "16px" }}>{periodTitle(period)}分</div>
           <button onClick={() => changeMonth(1)} style={navBtn}><ChevronRight size={14} /></button>
         </div>
         <div style={{ fontSize: "11.5px", color: "#8A8A8A", marginBottom: "10px" }}>

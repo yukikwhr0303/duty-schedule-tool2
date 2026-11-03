@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { CalendarRange, ChevronRight } from "lucide-react";
-import { YEAR_OPTIONS, daysInMonth, isoDate, countPeriods, daysBetweenInclusive } from "./holidays";
+import { YEAR_OPTIONS, countPeriods, daysBetweenInclusive } from "./holidays";
+import { periodsOfYear, periodRange, periodLabel, monthPeriod, nyPeriod } from "./periods";
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -10,6 +11,7 @@ const WD = ["日", "月", "火", "水", "木", "金", "土"];
 export default function PeriodPicker({ onChange, defaultYear, defaultMonth }) {
   const today = new Date();
   const [year, setYear] = useState(defaultYear ?? (YEAR_OPTIONS.includes(today.getFullYear()) ? today.getFullYear() : YEAR_OPTIONS[1]));
+  // month は 1〜12 の数字、または年末年始を表す "ny"
   const [month, setMonth] = useState(defaultMonth ?? today.getMonth() + 1);
   const [customRange, setCustomRange] = useState(null); // { start, end }
   const [detailOpen, setDetailOpen] = useState(false);
@@ -17,8 +19,8 @@ export default function PeriodPicker({ onChange, defaultYear, defaultMonth }) {
   const changeYear = (y) => { setYear(y); setCustomRange(null); setDetailOpen(false); };
   const changeMonth = (m) => { setMonth(m); setCustomRange(null); setDetailOpen(false); };
 
-  const monthStart = isoDate(year, month, 1);
-  const monthEnd = isoDate(year, month, daysInMonth(year, month));
+  const period = month === "ny" ? nyPeriod(year) : monthPeriod(year, month);
+  const { start: monthStart, end: monthEnd } = periodRange(period);
 
   const effectiveStart = customRange ? customRange.start : monthStart;
   const effectiveEnd = customRange ? customRange.end : monthEnd;
@@ -58,7 +60,7 @@ export default function PeriodPicker({ onChange, defaultYear, defaultMonth }) {
         <CalendarRange size={15} /> 対象期間
       </div>
 
-      <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "4px" }}>対象月</div>
+      <div style={{ fontSize: "11px", color: "#8A8A8A", marginBottom: "4px" }}>対象期間(12月・年末年始・1月は分かれています)</div>
       <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
         <select
           value={year}
@@ -72,13 +74,15 @@ export default function PeriodPicker({ onChange, defaultYear, defaultMonth }) {
         </select>
         <select
           value={month}
-          onChange={(e) => changeMonth(Number(e.target.value))}
+          onChange={(e) => changeMonth(e.target.value === "ny" ? "ny" : Number(e.target.value))}
           style={{
             flex: 1, padding: "8px 10px", border: "2px solid #1E1E1E", borderRadius: "3px",
             fontSize: "14px", fontFamily: "inherit", outline: "none", color: "#1E1E1E", background: "#FFFFFF",
           }}
         >
-          {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}月</option>)}
+          {periodsOfYear(year).map((p) => (
+            <option key={p.kind === "ny" ? "ny" : p.month} value={p.kind === "ny" ? "ny" : p.month}>{periodLabel(p, true)}</option>
+          ))}
         </select>
       </div>
 
@@ -120,7 +124,7 @@ export default function PeriodPicker({ onChange, defaultYear, defaultMonth }) {
           )}
           <div style={{ fontSize: "11px", color: "#8A8A8A", marginTop: "10px", lineHeight: 1.7 }}>
             ▶ 月をまたぐ期間や、月の途中からの期間もここで指定できます。<br />
-            ▶ 対象月を変更すると、この指定は自動でリセットされます(基本は月単位)。
+            ▶ 対象期間を変更すると、この指定は自動でリセットされます(基本は上の期間単位)。
           </div>
         </div>
       )}
