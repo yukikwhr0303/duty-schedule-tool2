@@ -28,6 +28,15 @@ HOLIDAYS = {
     date(2027, 11, 3): "文化の日", date(2027, 11, 23): "勤労感謝の日",
 }
 
+# 年末年始(12/29〜1/3、官公庁の休みに準拠)は全日を休日扱いにする(前半=日直 / 後半=夜勤 の2枠に分ける)。
+# 1/1は元日として既に登録済みなので、それ以外の日を追加する。
+for _y in range(2025, 2028):
+    for _d in (date(_y, 12, 29), date(_y, 12, 30), date(_y, 12, 31)):
+        HOLIDAYS.setdefault(_d, "年末年始")
+for _y in range(2025, 2029):
+    for _d in (date(_y, 1, 2), date(_y, 1, 3)):
+        HOLIDAYS.setdefault(_d, "年末年始")
+
 
 def holiday_name(d: date):
     return HOLIDAYS.get(d)

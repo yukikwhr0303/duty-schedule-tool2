@@ -12,6 +12,7 @@ import MemberAvailabilityViewer from "../MemberAvailabilityViewer";
 import MissingSubmissions from "../MissingSubmissions";
 import SubmissionLog from "../SubmissionLog";
 import { formatJst } from "../deadline";
+import { countPeriods, isWeekendOrHoliday } from "../holidays";
 import { periodRange, periodContaining, defaultTargetPeriod, shiftPeriod, periodsOfYear, periodLabel, monthPeriod, nyPeriod, deadlineBasis } from "../periods";
 
 // テスト用: ISO日付にn日足す
@@ -767,5 +768,24 @@ describe("実バックエンドとの結合テスト", () => {
     // 12月(12/1〜12/28)側には提出が入っていない
     const subsDec = await (await fetch(`${API_BASE}/availability/submissions?period_start=2026-12-01&period_days=28`)).json();
     expect(subsDec.some((s) => s.member_id === nm.id)).toBe(false);
+  });
+
+  it("年末年始(12/29〜1/3)は全日が休日扱い: 前半(日直)・後半(夜勤)の2枠に分かれ、必要枠数が6日×2=12枠になる", async () => {
+    expect(countPeriods("2026-12-29", 6)).toBe(12);
+    expect(isWeekendOrHoliday(new Date(2026, 11, 30))).toBe(true); // 水曜でも休日扱い
+    expect(isWeekendOrHoliday(new Date(2026, 11, 28))).toBe(false); // 12/28は通常の平日(月)
+    expect(isWeekendOrHoliday(new Date(2027, 0, 4))).toBe(false); // 1/4は通常の平日(月)
+
+    // バックエンドの自動割当でも、年末年始の全日が前半/後半に分かれる
+    const adminHeaders = { "Content-Type": "application/json", "X-Admin-Password": ADMIN_PASSWORD };
+    const ids = [];
+    for (let i = 0; i < 6; i++) {
+      const m = await (await fetch(`${API_BASE}/members`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: `年末割付テスト${i}`, rank: i < 3 ? "A" : "B" }) })).json();
+      ids.push(m.id);
+    }
+    const run = await (await fetch(`${API_BASE}/schedule/run`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ start_date: "2026-12-29", days: 6 }) })).json();
+    const halves = new Set(run.assignments.map((a) => a.half));
+    expect(halves.has("ALL")).toBe(false);
+    expect(run.assignments.filter((a) => a.role === "duty").length).toBe(12);
   });
 });
